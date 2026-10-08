@@ -1,5 +1,7 @@
 /*
- * Neon Dodge (versión web: un jugador + cooperativo online de 2 a 4)
+ * Neon Dodge v4 (versión web: un jugador + cooperativo online de 2 a 4)
+ * v4: 3 armas (pistola, ametralladora, RPG), 5 vidas, menos enemigos, habilidades nuevas de los jefes y 3 mapas.
+ * Los números siguen /workspace/v4/SPEC-neon-dodge-v4.md (iguales a la versión de compu).
  * Port de juego/neon_dodge.py para jugar en el navegador (Safari del iPad incluido).
  * Todo se dibuja en <canvas>, sin imágenes ni fuentes externas. El modo solo anda sin internet.
  * Multijugador: WebRTC peer-to-peer con PeerJS (peerjs.min.js, incluido en el repo). El navegador del
@@ -16,7 +18,7 @@
   const ORANGE = [255, 150, 40], LIME = [80, 255, 120], WHITE = [240, 248, 255], DIM = [120, 140, 180];
   const RED = [255, 60, 90];
 
-  const MAX_PARTICLES = 700, MAX_ENEMIES = 40, MAX_ENEMY_BULLETS = 260;
+  const MAX_PARTICLES = 700, MAX_ENEMIES = 24, MAX_ENEMY_BULLETS = 260; // v3: MAX_ENEMIES = 40
   const KILL_POINTS = { orb: 2, spinner: 3, hunter: 5 };
   const ENEMY_HP = { orb: 1, spinner: 2, hunter: 3 };
   const ENEMY_RADIUS = { orb: 12, spinner: 14, hunter: 16 };
@@ -25,9 +27,50 @@
   const SCORE_POWERUP = 10;
   const FIRE_COOLDOWN = 0.12, FIRE_COOLDOWN_RAPID = 0.065, BULLET_SPEED = 640;
   const WAVE_INTERVAL = 4.5;
+  // v4 "menos pelotitas": -40% enemigos por oleada y -40% de tasa de aparición (intervalo / 0,6)
+  const ENEMY_COUNT_MULT = 0.6, SPAWN_RATE_MULT = 0.6;
+
+  // ---- Armas (spec §1) ----
+  // cd = segundos entre tiros; cdRapid = con el powerup naranja. Cada arma tiene su propia recarga que sigue
+  // corriendo aunque cambies de arma (spec §8, 1.23) y hay una recarga global mínima igual a la del arma más rápida
+  // (para que alternar armas no dispare más rápido, checklist 1.8).
+  const WEAPONS = [
+    { key: 'pistola', cd: 0.12, cdRapid: 0.065, dmg: 1, speed: 640, r: 5, spread: 1.5, life: 1.1 },
+    { key: 'ametralladora', cd: 1 / 12, cdRapid: 1 / 18, dmg: 0.4, speed: 640, r: 3, spread: 6, life: 1.0 },
+    { key: 'rpg', cd: 1.2, cdRapid: 0.8, dmg: 6, speed: 360, r: 7, spread: 0, life: 3.0 },
+  ];
+  const RPG_RADIUS = 90, RPG_SPLASH = 3; // explosión: 3 de daño a todo lo que esté a <= 90 px (al jefe: una vez)
+  const GLOBAL_CD = 1 / 12, GLOBAL_CD_RAPID = 1 / 18;
+
+  // ---- Vidas (spec §3) ----
+  const START_LIVES = 5, MAX_LIVES = 5, RESPAWN_SHORT = 2, RESPAWN_INVULN = 2;
   const POWERUP_COLORS = { heal: LIME, magnet: CYAN, score: YELLOW, rapid: ORANGE };
   const FONT = 'ui-monospace, Menlo, Consolas, "Courier New", monospace';
-  const LS_NAME = 'neonDodge.nombre', LS_BEST = 'neonDodge.record';
+  const LS_NAME = 'neonDodge.nombre', LS_BEST = 'neonDodge.record', LS_MAP = 'neonDodge.mapa';
+
+  // ---- Textos (de /workspace/v4/textos.md, de Juan) ----
+  const TXT = {
+    arma: ['Pistola', 'Ametralladora', 'RPG'],
+    armaDesc: ['La de siempre. Precisa y confiable.', 'Muchas balas rápidas. ¡Barré todo!', 'Cohete lento que explota en área.'],
+    armaHud: 'Arma: {arma}', armaCambio: '¡{arma}!', recargando: 'Recargando…', armaBoton: 'ARMA',
+    mapaTitulo: 'Elegí el mapa', mapaLoEligeHost: 'El mapa lo elige el que creó la partida', mapaElegido: 'Mapa: {mapa}',
+    mapa: ['Arena Neón', 'Pilares', 'Portales'],
+    mapaDesc: ['La arena de siempre, abierta.', 'Escondete detrás de los pilares.', 'Entrá por uno, salí por el otro.'],
+    wardenAnillo: '¡ANILLO! Buscá el hueco', wardenMinas: '¡MINAS! Rompelas a tiros',
+    seekerTeleport: '¡TELETRANSPORTE!', seekerMisiles: '¡MISILES! Derribalos',
+    titanLaser: '¡LÁSER! Salí de la línea', titanGolpe: '¡GOLPE! Saltá las ondas', titanFase2: '¡TITAN SE ENOJÓ!',
+    vidasQuedan: 'Te quedan {n} vidas', vidasUltima: '¡Última vida! Cuidala', reaparece: 'Reapareciendo…',
+    fueraCoop: 'Estás fuera: esperá que te revivan', revivido: '¡Te revivieron! Tenés 1 vida',
+    otroFuera: '{nombre} está fuera', otroRevivido: '¡{nombre} volvió!',
+    goSolo: 'Sin vidas. ¡Game over!', goCoop: 'Están todos fuera. ¡Game over!',
+    version: 'Versión distinta: bajá la última del link',
+    tips: ['Cambiá de arma con 1, 2, 3, la rueda del mouse o Q.',
+      'El RPG explota en área: ideal contra muchos enemigos juntos.',
+      'Tenés 5 vidas. Si perdés todas, tus amigos te pueden revivir.',
+      'Antes de cada ataque, el jefe avisa. ¡Mirá la pantalla!',
+      'En Pilares, los pilares frenan las balas. Usalos de escudo.'],
+  };
+  const fmt = (t, o) => t.replace(/\{(\w+)\}/g, (m, k) => (o[k] !== undefined ? o[k] : m));
   const PLAYER_COLORS = [CYAN, LIME, ORANGE, PINK];
   const MAX_PLAYERS = 4, RESPAWN_TIME = 12;
 
@@ -215,6 +258,135 @@
   }
 
   // ---------------------------------------------------------------------------
+  // Mapas (spec §5). Formato interno; si está /workspace/v4/mapas.json, los números salen de ahí.
+  // Obstáculos: { t: 'rect', x, y, w, h } o { t: 'circle', x, y, r }. Portales: pares a <-> b.
+  // ---------------------------------------------------------------------------
+  // Copia textual de /workspace/v4/mapas.json (de Viernes), embebida porque fetch() no anda con file://.
+  const MAPAS_JSON = {"version":1,"convenciones":{"arena_px_referencia":{"web":[960,640],"compu":[960,640]},"origen":"esquina superior izquierda de la arena; x crece a la derecha, y crece hacia abajo","x_y":"normalizados 0..1: x_px = x * ancho_arena, y_px = y * alto_arena","rect":"x, y = esquina superior izquierda; w, h normalizados: w_px = w * ancho, h_px = h * alto","circulo":"x, y = centro; r normalizado a min(ancho, alto): r_px = r * min(ancho, alto) (con 960x640, r_px = r * 640). Así los círculos quedan redondos","radios":"TODOS los radios (círculos, portales, centro_libre, zonas circulares) usan r_px = r * min(ancho, alto)","salida_portal":"vector unitario (en píxeles) desde el centro del portal hacia el centro de la arena; el jugador sale en centro + salida * (r_portal_px + r_jugador + 6)","colores":"hex #RRGGBB","spawns_jugadores":"4 puntos, índice = orden de entrada del jugador (0 = host/solo)","zonas_prohibidas_enemigos":"formas (rect/circulo) donde no puede aparecer un enemigo, minas, ni el destino del teletransporte del SEEKER; los obstáculos SIEMPRE cuentan como prohibidos aunque no estén listados"},"centro_libre":{"x":0.5,"y":0.5,"r":0.18},"entrada_jefes":{"tipo":"rect","x":0.4167,"y":0.0,"w":0.1667,"h":0.375,"nota":"los jefes entran desde arriba al centro (x=480, y hasta 130-170 px); se deja libre de obstáculos y portales"},"mapas":[{"id":"arena_neon","nombre":"Arena Neón","paleta":{"fondo":"#080A18","grilla":"#002A38","grilla_horizontal":"#2E0A28","principal":"#00F0FF","acento":"#FF28B4"},"obstaculos":[],"portales":[],"spawns_jugadores":[{"x":0.4635,"y":0.75},{"x":0.5365,"y":0.75},{"x":0.3906,"y":0.75},{"x":0.6094,"y":0.75}],"zonas_prohibidas_enemigos":[{"tipo":"rect","x":0.3125,"y":0.6562,"w":0.375,"h":0.2344,"motivo":"spawns de jugadores"}]},{"id":"pilares","nombre":"Pilares","paleta":{"fondo":"#0D0618","grilla":"#2A1248","principal":"#A66BFF","acento":"#F0E0FF"},"obstaculos":[{"tipo":"circulo","x":0.2,"y":0.27,"r":0.07},{"tipo":"circulo","x":0.8,"y":0.27,"r":0.07},{"tipo":"circulo","x":0.2,"y":0.74,"r":0.07},{"tipo":"circulo","x":0.8,"y":0.74,"r":0.07},{"tipo":"rect","x":0.3125,"y":0.4219,"w":0.0417,"h":0.1562},{"tipo":"rect","x":0.6458,"y":0.4219,"w":0.0417,"h":0.1562}],"portales":[],"spawns_jugadores":[{"x":0.4635,"y":0.75},{"x":0.5365,"y":0.75},{"x":0.3906,"y":0.75},{"x":0.6094,"y":0.75}],"zonas_prohibidas_enemigos":[{"tipo":"rect","x":0.3125,"y":0.6562,"w":0.375,"h":0.2344,"motivo":"spawns de jugadores"},{"tipo":"circulo","x":0.2,"y":0.27,"r":0.1,"motivo":"pilar + margen"},{"tipo":"circulo","x":0.8,"y":0.27,"r":0.1,"motivo":"pilar + margen"},{"tipo":"circulo","x":0.2,"y":0.74,"r":0.1,"motivo":"pilar + margen"},{"tipo":"circulo","x":0.8,"y":0.74,"r":0.1,"motivo":"pilar + margen"},{"tipo":"rect","x":0.2925,"y":0.3919,"w":0.0817,"h":0.2162,"motivo":"pilar + margen"},{"tipo":"rect","x":0.6258,"y":0.3919,"w":0.0817,"h":0.2162,"motivo":"pilar + margen"}]},{"id":"portales","nombre":"Portales","paleta":{"fondo":"#03121A","grilla":"#0B3A44","principal":"#FFB02E","acento":"#B04DFF"},"obstaculos":[],"portales":[{"id":"A","nombre":"Ámbar","color":"#FFB02E","cooldown_s":1.0,"extremos":[{"x":0.13,"y":0.25,"r":0.05,"salida":{"dx":0.9118,"dy":0.4107}},{"x":0.87,"y":0.75,"r":0.05,"salida":{"dx":-0.9118,"dy":-0.4107}}]},{"id":"B","nombre":"Violeta","color":"#B04DFF","cooldown_s":1.0,"extremos":[{"x":0.87,"y":0.25,"r":0.05,"salida":{"dx":-0.9118,"dy":0.4107}},{"x":0.13,"y":0.75,"r":0.05,"salida":{"dx":0.9118,"dy":-0.4107}}]}],"spawns_jugadores":[{"x":0.4635,"y":0.75},{"x":0.5365,"y":0.75},{"x":0.3906,"y":0.75},{"x":0.6094,"y":0.75}],"zonas_prohibidas_enemigos":[{"tipo":"rect","x":0.3125,"y":0.6562,"w":0.375,"h":0.2344,"motivo":"spawns de jugadores"},{"tipo":"circulo","x":0.13,"y":0.25,"r":0.11,"motivo":"portal A"},{"tipo":"circulo","x":0.87,"y":0.75,"r":0.11,"motivo":"portal A"},{"tipo":"circulo","x":0.87,"y":0.25,"r":0.11,"motivo":"portal B"},{"tipo":"circulo","x":0.13,"y":0.75,"r":0.11,"motivo":"portal B"}]}]};
+  const hex = (h) => [parseInt(h.slice(1, 3), 16), parseInt(h.slice(3, 5), 16), parseInt(h.slice(5, 7), 16)];
+  const MIN_WH = Math.min(W, H);
+  function toShape(o) { // desnormaliza (rect: esquina sup. izq.; círculo: centro y r * min(W, H))
+    return o.tipo === 'rect' ? { t: 'rect', x: o.x * W, y: o.y * H, w: o.w * W, h: o.h * H }
+      : { t: 'circle', x: o.x * W, y: o.y * H, r: o.r * MIN_WH };
+  }
+  const MAPS = MAPAS_JSON.mapas.map((m) => {
+    const pal = m.paleta, principal = hex(pal.principal);
+    const portals = [];
+    for (const pp of m.portales || []) {
+      const [e1, e2] = pp.extremos;
+      const end = (e) => ({ x: e.x * W, y: e.y * H, r: e.r * MIN_WH, dx: e.salida.dx, dy: e.salida.dy });
+      portals.push({ c: hex(pp.color), cooldown: pp.cooldown_s, ends: [end(e1), end(e2)] });
+    }
+    return {
+      id: m.id, nombre: m.nombre,
+      bg: hex(pal.fondo), gridV: hex(pal.grilla), gridH: hex(pal.grilla_horizontal || pal.grilla),
+      principal, acento: hex(pal.acento),
+      star: m.id === 'arena_neon' ? [110, 150, 255] : principal, // Arena Neón: igual que la v3
+      obsFill: principal.map((v) => Math.round(v * 0.22)), obsStroke: principal, obsGlow: hex(pal.acento),
+      obstacles: (m.obstaculos || []).map(toShape),
+      zones: (m.zonas_prohibidas_enemigos || []).map(toShape),
+      portals,
+      spawns: m.spawns_jugadores.map((q) => [q.x * W, q.y * H]),
+    };
+  });
+  let MAP = MAPS[0];
+  function obstacleHit(x, y, pad) { // ¿el punto (con margen pad) toca algún obstáculo?
+    for (const o of MAP.obstacles) {
+      if (o.t === 'rect') {
+        if (x > o.x - pad && x < o.x + o.w + pad && y > o.y - pad && y < o.y + o.h + pad) {
+          // esquinas redondeadas: distancia real al rectángulo
+          const cx = clamp(x, o.x, o.x + o.w), cy = clamp(y, o.y, o.y + o.h);
+          if ((x - cx) ** 2 + (y - cy) ** 2 < pad * pad || (cx === x && cy === y)) return o;
+        }
+      } else if ((x - o.x) ** 2 + (y - o.y) ** 2 < (o.r + pad) ** 2) return o;
+    }
+    return null;
+  }
+  // empuja un círculo (q.x, q.y, radio r) fuera de los obstáculos; devuelve la normal del último choque o null
+  function pushOut(q, r) {
+    let n = null;
+    for (const o of MAP.obstacles) {
+      if (o.t === 'rect') {
+        const cx = clamp(q.x, o.x, o.x + o.w), cy = clamp(q.y, o.y, o.y + o.h);
+        let dx = q.x - cx, dy = q.y - cy;
+        const d2 = dx * dx + dy * dy;
+        if (d2 >= r * r) continue;
+        if (d2 > 1e-9) {
+          const d = Math.sqrt(d2);
+          dx /= d; dy /= d;
+          q.x = cx + dx * r; q.y = cy + dy * r;
+        } else { // el centro quedó adentro: sale por el lado más cercano
+          const l = q.x - o.x, rr = o.x + o.w - q.x, t = q.y - o.y, b = o.y + o.h - q.y;
+          const m = Math.min(l, rr, t, b);
+          if (m === l) { dx = -1; dy = 0; q.x = o.x - r; }
+          else if (m === rr) { dx = 1; dy = 0; q.x = o.x + o.w + r; }
+          else if (m === t) { dx = 0; dy = -1; q.y = o.y - r; }
+          else { dx = 0; dy = 1; q.y = o.y + o.h + r; }
+        }
+        n = [dx, dy];
+      } else {
+        let dx = q.x - o.x, dy = q.y - o.y;
+        const d = Math.hypot(dx, dy), rr = o.r + r;
+        if (d >= rr) continue;
+        if (d > 1e-6) { dx /= d; dy /= d; } else { dx = 0; dy = -1; }
+        q.x = o.x + dx * rr; q.y = o.y + dy * rr;
+        n = [dx, dy];
+      }
+    }
+    return n;
+  }
+  function nearPortal(x, y, pad) {
+    for (const pp of MAP.portals) for (const e of pp.ends) if ((x - e.x) ** 2 + (y - e.y) ** 2 < (e.r + pad) ** 2) return true;
+    return false;
+  }
+  function inShape(o, x, y, pad) {
+    if (o.t === 'rect') return x > o.x - pad && x < o.x + o.w + pad && y > o.y - pad && y < o.y + o.h + pad;
+    return (x - o.x) ** 2 + (y - o.y) ** 2 < (o.r + pad) ** 2;
+  }
+  // zonas donde no puede aparecer un enemigo, mina, power-up ni el destino del teletransporte (los obstáculos siempre cuentan)
+  function forbidden(x, y, pad) {
+    if (obstacleHit(x, y, pad)) return true;
+    for (const z of MAP.zones) if (inShape(z, x, y, pad)) return true;
+    return false;
+  }
+  // pone el mapa por id (si no existe, Arena Neón). save = guardarlo como preferencia (localStorage)
+  function useMap(id, save) {
+    const i = MAPS.findIndex((m) => m.id === id);
+    MAP = MAPS[i >= 0 ? i : 0];
+    if (typeof G !== 'undefined') G.mapIdx = MAPS.indexOf(MAP);
+    if (save) lsSet(LS_MAP, MAP.id);
+  }
+  const prefMap = () => lsGet(LS_MAP, 'arena_neon');
+
+  function drawMapGeometry() {
+    if (MAP.obstacles.length) {
+      const fill = rgb(MAP.obsFill), stroke = MAP.obsStroke;
+      additive(() => { for (const o of MAP.obstacles) glow(o.t === 'rect' ? o.x + o.w / 2 : o.x, o.t === 'rect' ? o.y + o.h / 2 : o.y, (o.t === 'rect' ? Math.max(o.w, o.h) : o.r * 2) * 1.1, MAP.obsGlow, 0.3); });
+      for (const o of MAP.obstacles) {
+        ctx.beginPath();
+        if (o.t === 'rect') ctx.rect(o.x, o.y, o.w, o.h); else ctx.arc(o.x, o.y, o.r, 0, TAU);
+        ctx.fillStyle = fill; ctx.fill();
+        ctx.shadowColor = rgb(stroke); ctx.shadowBlur = 12;
+        ctx.strokeStyle = rgb(stroke); ctx.lineWidth = 3; ctx.stroke();
+        ctx.shadowBlur = 0;
+      }
+    }
+    for (const pp of MAP.portals) {
+      for (const e of pp.ends) {
+        const t = bg.pulse;
+        additive(() => glow(e.x, e.y, e.r * 2.6, pp.c, 0.55 + 0.2 * Math.sin(t * 4)));
+        ctx.fillStyle = rgb(pp.c, 0.18); circle(e.x, e.y, e.r); ctx.fill();
+        ctx.strokeStyle = rgb(pp.c); ctx.lineWidth = 3; ctx.stroke();
+        ctx.strokeStyle = rgb(WHITE, 0.7); ctx.lineWidth = 2;
+        ctx.beginPath(); ctx.arc(e.x, e.y, e.r * 0.6, t * 3, t * 3 + 4); ctx.stroke();
+        // flechita de salida (hacia el centro)
+        ctx.strokeStyle = rgb(pp.c, 0.8);
+        ctx.beginPath(); ctx.moveTo(e.x + e.dx * (e.r + 6), e.y + e.dy * (e.r + 6)); ctx.lineTo(e.x + e.dx * (e.r + 18), e.y + e.dy * (e.r + 18)); ctx.stroke();
+      }
+    }
+  }
+
+  // ---------------------------------------------------------------------------
   // Fondo en capas (estrellas lejanas, grilla que scrollea, estrellas cercanas, viñeta)
   // ---------------------------------------------------------------------------
   const bg = (() => {
@@ -232,7 +404,7 @@
     const st = { off: 0, pulse: 0 };
     st.update = (dt) => { st.off += 30 * dt; st.pulse += dt; };
     st.draw = () => {
-      ctx.fillStyle = rgb(BG_DEEP);
+      ctx.fillStyle = rgb(MAP.bg);
       ctx.fillRect(-40, -40, W + 80, H + 80);
       for (const [x, y] of far) {
         const a = Math.floor(70 + 40 * Math.sin(st.pulse * 2 + x));
@@ -241,17 +413,17 @@
       }
       const ox = st.off % STEP, oy = (st.off * 0.6) % STEP;
       ctx.lineWidth = 1;
-      ctx.strokeStyle = 'rgb(0,42,56)';
+      ctx.strokeStyle = rgb(MAP.gridV);
       ctx.beginPath();
       for (let x = ox - STEP; x <= W + STEP; x += STEP) { ctx.moveTo(x, -40); ctx.lineTo(x, H + 40); }
       ctx.stroke();
-      ctx.strokeStyle = 'rgb(46,10,40)';
+      ctx.strokeStyle = rgb(MAP.gridH);
       ctx.beginPath();
       for (let y = oy - STEP; y <= H + STEP; y += STEP) { ctx.moveTo(-40, y); ctx.lineTo(W + 40, y); }
       ctx.stroke();
       additive(() => {
         for (const [x, y, s] of near) {
-          glow(x, y, (5 + s * 2) * 1.6, [110, 150, 255], 0.3 + 0.4 * Math.abs(Math.sin(st.pulse * 2.5 + y)));
+          glow(x, y, (5 + s * 2) * 1.6, MAP.star, 0.3 + 0.4 * Math.abs(Math.sin(st.pulse * 2.5 + y)));
         }
       });
       ctx.fillStyle = rgb(WHITE);
@@ -348,9 +520,42 @@
     }
   }
 
+  function drawMine(m) {
+    const blink = 0.5 + 0.5 * Math.sin(bg.pulse * 12 + m.id);
+    additive(() => glow(m.x, m.y, MINE_R * 3, RED, 0.5 + 0.4 * blink));
+    const pts = [];
+    for (let i = 0; i < 16; i++) {
+      const a = bg.pulse * 2 + i * TAU / 16, rr = i % 2 === 0 ? MINE_R + 4 : MINE_R - 2;
+      pts.push([m.x + Math.cos(a) * rr, m.y + Math.sin(a) * rr]);
+    }
+    poly(pts);
+    ctx.fillStyle = m.flash > 0 ? rgb(WHITE) : 'rgb(80,0,20)'; ctx.fill();
+    ctx.strokeStyle = rgb(RED); ctx.lineWidth = 2; ctx.stroke();
+    ctx.fillStyle = rgb(blink > 0.5 ? WHITE : ORANGE); circle(m.x, m.y, 4); ctx.fill();
+  }
+  function drawMissile(m) {
+    const c = Math.cos(m.ang), s = Math.sin(m.ang), r = MISSILE_R;
+    additive(() => glow(m.x, m.y, 28, ORANGE, 0.7));
+    poly([[m.x + c * r * 1.6, m.y + s * r * 1.6], [m.x - c * r - s * r * 0.8, m.y - s * r + c * r * 0.8],
+      [m.x - c * r * 0.5, m.y - s * r * 0.5], [m.x - c * r + s * r * 0.8, m.y - s * r - c * r * 0.8]]);
+    ctx.fillStyle = rgb(m.flash > 0 ? WHITE : ORANGE); ctx.fill();
+    ctx.strokeStyle = rgb(YELLOW); ctx.lineWidth = 1.5; ctx.stroke();
+  }
+
   // ---------------------------------------------------------------------------
-  // Jefes (mismos patrones que en Python)
+  // Jefes. Ataques de la v3 con ~30% menos balas (spec §2) + habilidades nuevas con aviso (spec §4).
+  // Habilidad activa: this.ab = { k, t, a, b, c } (k = código, t = segundos de aviso que faltan).
   // ---------------------------------------------------------------------------
+  const AB = { W_RING: 1, W_MINES: 2, S_TELE: 3, S_MISS: 4, T_LASER_WARN: 5, T_LASER: 6, T_SLAM: 7 };
+  const WARN = { 1: 0.8, 2: 0.8, 3: 0.9, 4: 0.7, 5: 0.8, 7: 0.8 }; // aviso en segundos (0,6–1 s)
+  // números de las habilidades (iguales en web y compu)
+  const RING_SLOTS = 18, RING_GAP = 4, RING_SPEED = 150;              // anillo: 14 balas, hueco de 100°
+  const MINE_MAX = 4, MINE_ORBIT = 110, MINE_SPIN = 1.4, MINE_R = 12, MINE_HP = 3, MINE_PTS = 3;
+  const TELE_DIST = 190, TELE_HOLD = 1.2;
+  const MISSILE_SPEED = 150, MISSILE_TURN = 2.0, MISSILE_HOMING = 4, MISSILE_LIFE = 8, MISSILE_HP = 2, MISSILE_R = 9, MISSILE_PTS = 2;
+  const LASER_SWEEP = 1.75, LASER_TIME = 1.6, LASER_HALF = 13;       // barre ~100° en 1,6 s; rayo de 26 px
+  const WAVE_SPEED = 240, WAVE_HALF = 8, WAVE_GAPS = 3, WAVE_GAP_W = 40 * Math.PI / 180;
+
   class Boss {
     constructor(def) {
       Object.assign(this, def);
@@ -359,6 +564,7 @@
       this.state = 'enter';
       this.t = 0; this.flash = 0; this.angle = 0; this.index = 0;
       this.phase2Announced = false;
+      this.ab = null; this.waves = [];
     }
     get phase() { return this.hp <= this.maxHp * 0.5 ? 2 : 1; }
     get vulnerable() { return this.state !== 'enter'; }
@@ -372,12 +578,21 @@
       }
       this.t += dt;
       this.fight(dt, g);
+      if (this.ab && this.ab.k !== AB.T_LASER) {
+        this.ab.t -= dt;
+        if (this.ab.t <= 0) { const ab = this.ab; this.ab = null; logAbility(this.name + ':ya' + ab.k); this.execute(ab, g); }
+      }
+    }
+    startAb(k, banner, a = 0, b = 0, c = 0) {
+      this.ab = { k, t: WARN[k] || 0, a, b, c };
+      logAbility(this.name + ':aviso' + k);
+      if (banner) G.showBanner(banner, this.color, Math.max(1.2, WARN[k] + 0.4));
     }
     damage(n) {
       if (!this.vulnerable) return false;
       this.hp -= n;
       this.flash = 0.06;
-      return this.hp <= 0;
+      return this.hp <= 0.001;
     }
     ringShot(g, n, speed, offset = 0, color = null, radius = 6) {
       for (let i = 0; i < n; i++) {
@@ -410,35 +625,146 @@
       ctx.stroke();
       ctx.shadowBlur = 0;
     }
+    // avisos y efectos de las habilidades (lo usan el host y los clientes, sale de this.ab / this.waves)
+    drawAbilities() {
+      const ab = this.ab, blink = 0.55 + 0.45 * Math.sin(bg.pulse * 18);
+      for (const w of this.waves) { // ondas del TITAN (con 3 huecos)
+        ctx.strokeStyle = rgb(ORANGE, 0.95); ctx.lineWidth = WAVE_HALF * 2;
+        ctx.shadowColor = rgb(RED); ctx.shadowBlur = 14;
+        for (let i = 0; i < WAVE_GAPS; i++) {
+          const g0 = w.rot + i * TAU / WAVE_GAPS + WAVE_GAP_W / 2, g1 = w.rot + (i + 1) * TAU / WAVE_GAPS - WAVE_GAP_W / 2;
+          ctx.beginPath(); ctx.arc(this.x, this.y, Math.max(1, w.r), g0, g1); ctx.stroke();
+        }
+        ctx.shadowBlur = 0;
+      }
+      if (!ab) return;
+      ctx.lineCap = 'round';
+      if (ab.k === AB.W_RING) { // anillo con hueco: se marca el hueco en verde
+        const r = this.r + 40 + (1 - ab.t / WARN[1]) * 30;
+        const half = (RING_GAP + 1) * Math.PI / RING_SLOTS;
+        ctx.strokeStyle = rgb(this.color, 0.4 + 0.5 * blink); ctx.lineWidth = 4;
+        ctx.beginPath(); ctx.arc(this.x, this.y, r, ab.a + half, ab.a - half + TAU); ctx.stroke();
+        ctx.strokeStyle = rgb(LIME, 0.9); ctx.lineWidth = 3;
+        ctx.beginPath(); ctx.arc(this.x, this.y, r + 14, ab.a - half, ab.a + half); ctx.stroke();
+      } else if (ab.k === AB.W_MINES) {
+        for (let i = 0; i < MINE_MAX; i++) {
+          if (!(ab.b & (1 << i))) continue;
+          const a = ab.a + (WARN[2] - ab.t) * MINE_SPIN + i * Math.PI / 2;
+          const x = this.x + Math.cos(a) * MINE_ORBIT, y = this.y + Math.sin(a) * MINE_ORBIT;
+          ctx.strokeStyle = rgb(RED, blink); ctx.lineWidth = 2;
+          circle(x, y, MINE_R + 6 * blink); ctx.stroke();
+        }
+      } else if (ab.k === AB.S_TELE) { // marca del destino del teletransporte
+        ctx.strokeStyle = rgb(YELLOW, 0.5 + 0.5 * blink); ctx.lineWidth = 3;
+        circle(ab.a, ab.b, this.r + 4); ctx.stroke();
+        ctx.beginPath();
+        for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) { ctx.moveTo(ab.a + dx * (this.r - 14), ab.b + dy * (this.r - 14)); ctx.lineTo(ab.a + dx * (this.r + 16), ab.b + dy * (this.r + 16)); }
+        ctx.stroke();
+        ctx.setLineDash([6, 10]); ctx.strokeStyle = rgb(YELLOW, 0.35); ctx.lineWidth = 2;
+        ctx.beginPath(); ctx.moveTo(this.x, this.y); ctx.lineTo(ab.a, ab.b); ctx.stroke(); ctx.setLineDash([]);
+      } else if (ab.k === AB.S_MISS) {
+        additive(() => glow(this.x, this.y + this.r, 40, ORANGE, blink));
+      } else if (ab.k === AB.T_LASER_WARN) { // línea fina de aviso (no hace daño)
+        ctx.strokeStyle = rgb(RED, 0.5 + 0.5 * blink); ctx.lineWidth = 2;
+        ctx.beginPath(); ctx.moveTo(this.x, this.y); ctx.lineTo(this.x + Math.cos(ab.a) * 1400, this.y + Math.sin(ab.a) * 1400); ctx.stroke();
+        ctx.strokeStyle = rgb(RED, 0.25); ctx.lineWidth = 2;
+        ctx.beginPath(); ctx.arc(this.x, this.y, this.r + 30, ab.b > 0 ? ab.a : ab.a - LASER_SWEEP, ab.b > 0 ? ab.a + LASER_SWEEP : ab.a); ctx.stroke();
+      } else if (ab.k === AB.T_LASER) { // rayo grueso que barre
+        const a = ab.a + ab.b * LASER_SWEEP * clamp(ab.c / LASER_TIME, 0, 1);
+        const ex = this.x + Math.cos(a) * 1400, ey = this.y + Math.sin(a) * 1400;
+        additive(() => {
+          ctx.globalAlpha = 0.5; ctx.strokeStyle = rgb(RED); ctx.lineWidth = LASER_HALF * 4;
+          ctx.beginPath(); ctx.moveTo(this.x, this.y); ctx.lineTo(ex, ey); ctx.stroke();
+          ctx.globalAlpha = 1;
+        });
+        ctx.strokeStyle = rgb(ORANGE); ctx.lineWidth = LASER_HALF * 2;
+        ctx.beginPath(); ctx.moveTo(this.x, this.y); ctx.lineTo(ex, ey); ctx.stroke();
+        ctx.strokeStyle = rgb(WHITE); ctx.lineWidth = LASER_HALF * 0.7;
+        ctx.beginPath(); ctx.moveTo(this.x, this.y); ctx.lineTo(ex, ey); ctx.stroke();
+      } else if (ab.k === AB.T_SLAM) { // golpe al suelo: círculo que crece y dónde van a estar los huecos
+        const k = 1 - ab.t / WARN[7];
+        ctx.fillStyle = rgb(RED, 0.18 + 0.2 * blink); circle(this.x, this.y, this.r + 80 * k); ctx.fill();
+        ctx.strokeStyle = rgb(LIME, 0.8); ctx.lineWidth = 3;
+        for (let i = 0; i < WAVE_GAPS; i++) {
+          const a = ab.a + i * TAU / WAVE_GAPS;
+          ctx.beginPath(); ctx.moveTo(this.x + Math.cos(a) * (this.r + 20), this.y + Math.sin(a) * (this.r + 20));
+          ctx.lineTo(this.x + Math.cos(a) * (this.r + 120), this.y + Math.sin(a) * (this.r + 120)); ctx.stroke();
+        }
+      }
+      ctx.lineCap = 'butt';
+    }
+  }
+
+  // jugador vivo al azar (para habilidades que eligen un objetivo)
+  function randomAlive() {
+    const a = G.players.filter((p) => p.hp > 0);
+    return a.length ? choice(a) : null;
   }
 
   class Warden extends Boss {
     constructor() {
       super({ name: 'WARDEN', color: MAGENTA, maxHp: 70, r: 42, bonus: 50, enterY: 160 });
       this.burstCd = 1.2; this.spiralCd = 0; this.spiralAng = 0; this.burstOff = 0;
+      this.ringCd = 4; this.mineCd = 8;
     }
     fight(dt, g) {
       const p2 = this.phase === 2;
       this.angle += dt * (p2 ? 1.4 : 0.6);
       this.x = W / 2 + Math.sin(this.t * 0.5) * 260;
       this.y = this.enterY + Math.sin(this.t * 0.9) * 60;
-      this.burstCd -= dt;
-      if (this.burstCd <= 0) {
-        const n = p2 ? 18 : 14;
-        this.ringShot(g, n, p2 ? 200 : 170, this.burstOff);
-        this.burstOff += Math.PI / n;
-        this.burstCd = p2 ? 2.6 : 1.9;
-        g.particles.ring(this.x, this.y, this.color, 70, 0.4, 3);
+      if (!this.ab) {
+        this.ringCd -= dt; this.mineCd -= dt;
+        if (this.ringCd <= 0) {
+          const tg = randomAlive();
+          const base = tg ? Math.atan2(tg.y - this.y, tg.x - this.x) : rand(0, TAU);
+          this.startAb(AB.W_RING, TXT.wardenAnillo, base + rand(-0.7, 0.7));
+          this.ringCd = p2 ? 6 : 8;
+        } else if (this.mineCd <= 0) {
+          let mask = 0;
+          for (let i = 0; i < MINE_MAX; i++) if (!G.mines.some((m) => m.slot === i)) mask |= 1 << i;
+          if (mask) this.startAb(AB.W_MINES, TXT.wardenMinas, G.mineOrbit, mask);
+          this.mineCd = p2 ? 9 : 12;
+        }
+        this.burstCd -= dt; // anillo común: v3 14/18 balas -> v4 10/13
+        if (this.burstCd <= 0) {
+          const n = p2 ? 13 : 10;
+          this.ringShot(g, n, p2 ? 200 : 170, this.burstOff);
+          this.burstOff += Math.PI / n;
+          this.burstCd = p2 ? 2.6 : 1.9;
+          g.particles.ring(this.x, this.y, this.color, 70, 0.4, 3);
+        }
       }
-      if (p2) {
+      if (p2) { // espiral: v3 cada 0,11 s -> v4 cada 0,157 s (-30%)
         this.spiralCd -= dt;
         while (this.spiralCd <= 0) {
-          this.spiralCd += 0.11;
+          this.spiralCd += 0.11 / 0.7;
           this.spiralAng += 0.37;
           for (const k of [0, Math.PI]) {
             const a = this.spiralAng + k;
             g.enemyShot(this.x, this.y, Math.cos(a) * 160, Math.sin(a) * 160, PINK, 5);
           }
+        }
+      }
+    }
+    execute(ab, g) {
+      if (ab.k === AB.W_RING) { // 18 lugares, faltan 4 seguidos centrados en ab.a
+        const step = TAU / RING_SLOTS;
+        for (let i = 0; i < RING_SLOTS; i++) {
+          let d = Math.abs(((i * step - ab.a) % TAU + TAU + Math.PI) % TAU - Math.PI);
+          if (d < (RING_GAP / 2) * step) continue;
+          const a = i * step;
+          g.enemyShot(this.x, this.y, Math.cos(a) * RING_SPEED, Math.sin(a) * RING_SPEED, PINK, 7);
+        }
+        g.particles.ring(this.x, this.y, PINK, 90, 0.5, 3);
+      } else if (ab.k === AB.W_MINES) {
+        G.mineOrbit = ab.a + WARN[2] * MINE_SPIN;
+        for (let i = 0; i < MINE_MAX; i++) {
+          if (!(ab.b & (1 << i)) || G.mines.some((m) => m.slot === i) || G.mines.length >= MINE_MAX) continue;
+          const a = G.mineOrbit + i * Math.PI / 2;
+          const x = this.x + Math.cos(a) * MINE_ORBIT, y = this.y + Math.sin(a) * MINE_ORBIT;
+          if (forbidden(x, y, MINE_R)) continue; // no aparece adentro de un pilar/zona prohibida
+          G.mines.push({ id: ++G.nid, slot: i, x, y, hp: MINE_HP, flash: 0 });
+          g.particles.ring(x, y, RED, 30, 0.4, 2);
         }
       }
     }
@@ -467,42 +793,94 @@
     constructor() {
       super({ name: 'SEEKER', color: YELLOW, maxHp: 100, r: 36, bonus: 80, enterY: 130 });
       this.aimCd = 1.0; this.summonCd = 4.0; this.ringCd = 3.0; this.lx = 0; this.ly = 1;
+      this.teleCd = 5; this.missCd = 9; this.hold = 0;
+    }
+    teleDest() { // cerca de un jugador vivo, nunca en pilar/zona/portal/fuera ni pegado a nadie
+      const tg = randomAlive();
+      if (!tg) return null;
+      for (let i = 0; i < 24; i++) {
+        const a = rand(0, TAU), x = tg.x + Math.cos(a) * TELE_DIST, y = tg.y + Math.sin(a) * TELE_DIST;
+        if (x < this.r + 20 || x > W - this.r - 20 || y < this.r + 20 || y > H - this.r - 20) continue;
+        if (forbidden(x, y, this.r) || nearPortal(x, y, this.r + 20)) continue;
+        if (G.players.some((p) => p.hp > 0 && Math.hypot(p.x - x, p.y - y) < this.r + p.r + 90)) continue;
+        return [x, y];
+      }
+      return null;
     }
     fight(dt, g) {
       const p2 = this.phase === 2;
-      this.x = W / 2 + Math.sin(this.t * 0.7) * 330;
-      this.y = this.enterY + Math.sin(this.t * 1.4) * 35;
+      // se mueve hacia su recorrido de la v3 (así puede volver después de teletransportarse)
+      const px = W / 2 + Math.sin(this.t * 0.7) * 330, py = this.enterY + Math.sin(this.t * 1.4) * 35;
+      if (this.hold > 0) this.hold -= dt;
+      else {
+        const dx = px - this.x, dy = py - this.y, d = Math.hypot(dx, dy), mv = 260 * dt;
+        if (d <= mv) { this.x = px; this.y = py; } else { this.x += dx / d * mv; this.y += dy / d * mv; }
+      }
       const [tx, ty] = g.targetFor(this.x, this.y);
       const [nx, ny] = norm(tx - this.x, ty - this.y);
       if (nx || ny) {
         const k = Math.min(1, 6 * dt);
         this.lx += (nx - this.lx) * k; this.ly += (ny - this.ly) * k;
       }
-      this.aimCd -= dt;
+      if (this.ab) return;
+      this.teleCd -= dt; this.missCd -= dt;
+      if (this.teleCd <= 0) {
+        const d = this.teleDest();
+        if (d) this.startAb(AB.S_TELE, TXT.seekerTeleport, d[0], d[1]);
+        this.teleCd = p2 ? 7 : 9;
+        if (d) return;
+      } else if (this.missCd <= 0) {
+        this.startAb(AB.S_MISS, TXT.seekerMisiles, p2 ? 3 : 2);
+        this.missCd = p2 ? 7.5 : 10;
+        return;
+      }
+      this.aimCd -= dt; // abanico: v3 3/5 balas -> v4 2/4
       if (this.aimCd <= 0) {
-        if (!p2) { this.fanShot(g, tx, ty, 3, 0.18, 260); this.aimCd = 1.1; }
-        else { this.fanShot(g, tx, ty, 5, 0.16, 300); this.aimCd = 0.8; }
+        if (!p2) { this.fanShot(g, tx, ty, 2, 0.18, 260); this.aimCd = 1.1; }
+        else { this.fanShot(g, tx, ty, 4, 0.16, 300); this.aimCd = 0.8; }
         g.particles.spray(this.x + this.lx * this.r, this.y + this.ly * this.r, this.lx, this.ly, YELLOW, 6, 0.4, 200);
       }
-      this.summonCd -= dt;
+      this.summonCd -= dt; // hunters: v3 tope 6 -> v4 tope 4
       if (this.summonCd <= 0) {
         this.summonCd = p2 ? 5.0 : 6.5;
         let hunters = g.enemies.filter((e) => e.kind === 'hunter').length;
         for (const side of [-1, 1]) {
-          if (hunters < 6) {
-            g.enemies.push(g.makeEnemy(Math.max(3, g.wave), 'hunter', this.x + side * 50, this.y + 20));
-            hunters++;
-          }
+          if (hunters >= 4) break;
+          let x = this.x + side * 50, y = this.y + 20, ok = !forbidden(x, y, 18);
+          for (let i = 0; i < 10 && !ok; i++) { x = this.x + rand(-90, 90); y = this.y + rand(-40, 90); ok = !forbidden(x, y, 18); }
+          if (!ok) continue;
+          g.enemies.push(g.makeEnemy(Math.max(3, g.wave), 'hunter', x, y));
+          hunters++;
         }
         g.particles.ring(this.x, this.y, YELLOW, 90, 0.5, 3);
       }
-      if (p2) {
+      if (p2) { // anillo: v3 10 -> v4 7
         this.ringCd -= dt;
-        if (this.ringCd <= 0) { this.ringCd = 3.0; this.ringShot(g, 10, 120, rand(0, TAU), ORANGE, 7); }
+        if (this.ringCd <= 0) { this.ringCd = 3.0; this.ringShot(g, 7, 120, rand(0, TAU), ORANGE, 7); }
+      }
+    }
+    execute(ab, g) {
+      if (ab.k === AB.S_TELE) { // aparece exactamente en la marca
+        g.particles.burst(this.x, this.y, YELLOW, 24, 220, 5);
+        this.x = ab.a; this.y = ab.b;
+        this.hold = TELE_HOLD;
+        this.aimCd = Math.max(this.aimCd, 0.7);
+        g.particles.ring(this.x, this.y, YELLOW, 110, 0.5, 4);
+        g.addShake(4);
+      } else if (ab.k === AB.S_MISS) {
+        for (let i = 0; i < ab.a; i++) {
+          const tg = randomAlive();
+          const base = tg ? Math.atan2(tg.y - this.y, tg.x - this.x) : Math.PI / 2;
+          const a = base + (i - (ab.a - 1) / 2) * 0.7;
+          G.missiles.push({ id: ++G.nid, x: this.x + Math.cos(a) * this.r, y: this.y + Math.sin(a) * this.r, ang: a, t: 0,
+            target: tg ? tg.id : -1, hp: MISSILE_HP, flash: 0 });
+        }
+        g.particles.spray(this.x, this.y + this.r, 0, 1, ORANGE, 10, 0.8, 200);
       }
     }
     draw() {
       const px = this.x, py = this.y, r = this.r, c = this.bodyColor();
+      if (this.ab && this.ab.k === AB.S_TELE && Math.floor(bg.pulse * 20) % 2 === 0) ctx.globalAlpha = 0.45; // parpadea
       this.drawAura(px, py);
       poly([[px, py - r * 1.25], [px + r * 1.5, py], [px, py + r * 1.25], [px - r * 1.5, py]]);
       ctx.fillStyle = 'rgb(55,45,0)'; ctx.fill();
@@ -510,7 +888,7 @@
       ctx.fillStyle = 'rgb(250,245,220)';
       ctx.beginPath(); ctx.ellipse(px, py, r * 0.9, r * 0.55, 0, 0, TAU); ctx.fill();
       const ex = px + this.lx * r * 0.35, ey = py + this.ly * r * 0.35;
-      ctx.fillStyle = rgb(this.phase === 2 ? ORANGE : YELLOW);
+      ctx.fillStyle = rgb(this.phase === 2 || (this.ab && this.ab.k === AB.S_MISS) ? ORANGE : YELLOW);
       circle(ex, ey, r * 0.36); ctx.fill();
       ctx.fillStyle = 'rgb(20,10,0)';
       circle(ex, ey, r * 0.17); ctx.fill();
@@ -519,6 +897,7 @@
         const a = this.angle * 2 * side;
         circle(px + side * r * 1.9 + Math.cos(a) * 6, py + Math.sin(a) * 6, 5); ctx.fill();
       }
+      ctx.globalAlpha = 1;
     }
   }
 
@@ -527,19 +906,66 @@
       super({ name: 'TITAN', color: RED, maxHp: 160, r: 48, bonus: 150, enterY: 170 });
       this.mode = 'roam'; this.modeT = 2.0; this.burstCd = 1.0; this.burstOff = 0;
       this.dx = 0; this.dy = 1; this.rtx = W / 2; this.rty = H / 2 - 60;
+      this.abCd = 6; this.nextAb = 'laser'; this.combo = false; this.wave2 = 0; this.wave2Rot = 0;
+    }
+    startLaser() {
+      const [tx, ty] = G.targetFor(this.x, this.y);
+      const dir = Math.random() < 0.5 ? 1 : -1;
+      const a0 = Math.atan2(ty - this.y, tx - this.x) - dir * LASER_SWEEP / 2; // el barrido pasa por el objetivo
+      this.startAb(AB.T_LASER_WARN, TXT.titanLaser, a0, dir);
     }
     fight(dt, g) {
       const p2 = this.phase === 2;
       this.angle += dt * (p2 ? 2.2 : 1.0);
+      // ondas del golpe al suelo
+      if (this.wave2 > 0) { this.wave2 -= dt; if (this.wave2 <= 0) this.waves.push({ r: this.r, rot: this.wave2Rot }); }
+      for (const w of this.waves) w.r += WAVE_SPEED * dt;
+      this.waves = this.waves.filter((w) => w.r < 1200);
+      for (const w of this.waves) {
+        for (const p of G.players) {
+          if (p.hp <= 0) continue;
+          const d = Math.hypot(p.x - this.x, p.y - this.y);
+          if (Math.abs(d - w.r) > WAVE_HALF + p.r * 0.6) continue;
+          const pa = Math.atan2(p.y - this.y, p.x - this.x);
+          let inGap = false;
+          for (let i = 0; i < WAVE_GAPS; i++) {
+            const gc = w.rot + i * TAU / WAVE_GAPS;
+            if (Math.abs(((pa - gc) % TAU + TAU + Math.PI) % TAU - Math.PI) < WAVE_GAP_W / 2) inGap = true;
+          }
+          if (!inGap) damagePlayer(p);
+        }
+      }
+      // láser
+      if (this.ab && this.ab.k === AB.T_LASER) {
+        this.ab.c += dt;
+        const a = this.ab.a + this.ab.b * LASER_SWEEP * clamp(this.ab.c / LASER_TIME, 0, 1);
+        const cx = Math.cos(a), cy = Math.sin(a);
+        for (const p of G.players) { // atraviesa los pilares (spec §8)
+          if (p.hp <= 0) continue;
+          const vx = p.x - this.x, vy = p.y - this.y, along = vx * cx + vy * cy;
+          if (along > 0 && Math.abs(vx * cy - vy * cx) < LASER_HALF + p.r * 0.6) damagePlayer(p);
+        }
+        if (this.ab.c >= LASER_TIME) { this.ab = null; this.mode = 'roam'; this.modeT = p2 ? 1.6 : 2.6; this.abCd = p2 ? 9 : 11; }
+        return;
+      }
+      if (this.mode === 'ab') return; // quieto mientras avisa
       if (this.mode === 'roam') {
         const dx = this.rtx - this.x, dy = this.rty - this.y, d = Math.hypot(dx, dy);
         if (d < 20) { this.rtx = rand(120, W - 120); this.rty = rand(100, H - 160); }
         else { this.x += dx / d * 90 * dt; this.y += dy / d * 90 * dt; }
-        this.burstCd -= dt;
+        this.burstCd -= dt; // anillo: v3 12/16 -> v4 8/11
         if (this.burstCd <= 0) {
-          this.ringShot(g, p2 ? 16 : 12, 180, this.burstOff);
+          this.ringShot(g, p2 ? 11 : 8, 180, this.burstOff);
           this.burstOff += 0.2;
           this.burstCd = p2 ? 1.4 : 2.2;
+        }
+        this.abCd -= dt;
+        if (this.abCd <= 0) {
+          this.mode = 'ab';
+          if (p2) { this.combo = true; this.startAb(AB.T_SLAM, TXT.titanGolpe, rand(0, TAU)); } // fase 2: golpe + láser
+          else if (this.nextAb === 'laser') { this.nextAb = 'slam'; this.startLaser(); }
+          else { this.nextAb = 'laser'; this.startAb(AB.T_SLAM, TXT.titanGolpe, rand(0, TAU)); }
+          return;
         }
         this.modeT -= dt;
         if (this.modeT <= 0) {
@@ -561,18 +987,31 @@
         if (hitWall || this.modeT <= 0) {
           this.x = clamp(this.x, this.r, W - this.r);
           this.y = clamp(this.y, this.r, H - this.r);
-          if (hitWall) {
-            this.ringShot(g, p2 ? 14 : 10, 210, rand(0, TAU), ORANGE);
+          if (hitWall) { // v3 10/14 -> v4 7/10
+            this.ringShot(g, p2 ? 10 : 7, 210, rand(0, TAU), ORANGE);
             g.particles.burst(this.x, this.y, ORANGE, 24, 260, 6);
             g.addShake(12);
           }
-          if (p2) { const [tx, ty] = g.targetFor(this.x, this.y); this.fanShot(g, tx, ty, 5, 0.2, 280, YELLOW); }
+          if (p2) { const [tx, ty] = g.targetFor(this.x, this.y); this.fanShot(g, tx, ty, 4, 0.2, 280, YELLOW); } // v3 5 -> v4 4
           this.mode = 'recover';
           this.modeT = 0.6;
         }
       } else {
         this.modeT -= dt;
         if (this.modeT <= 0) { this.mode = 'roam'; this.modeT = p2 ? 1.6 : 2.6; }
+      }
+    }
+    execute(ab, g) {
+      const p2 = this.phase === 2;
+      if (ab.k === AB.T_LASER_WARN) {
+        this.ab = { k: AB.T_LASER, t: 0, a: ab.a, b: ab.b, c: 0 };
+      } else if (ab.k === AB.T_SLAM) {
+        this.waves.push({ r: this.r, rot: ab.a });
+        if (p2) { this.wave2 = 0.5; this.wave2Rot = ab.a + Math.PI / WAVE_GAPS; } // 2ª onda con los huecos corridos
+        g.particles.burst(this.x, this.y, ORANGE, 30, 300, 7);
+        g.addShake(14);
+        if (this.combo) { this.combo = false; this.startLaser(); } // fase 2: encadena el láser
+        else { this.mode = 'roam'; this.modeT = p2 ? 1.6 : 2.6; this.abCd = p2 ? 9 : 13; }
       }
     }
     draw() {
@@ -583,7 +1022,7 @@
         ctx.beginPath(); ctx.moveTo(px, py); ctx.lineTo(px + this.dx * 1400, py + this.dy * 1400); ctx.stroke();
         additive(() => glow(px + this.dx * (r + 20), py + this.dy * (r + 20), 44, RED, 1));
       }
-      if (this.mode === 'tele') { px += rand(-3, 3); py += rand(-3, 3); }
+      if (this.mode === 'tele' || (this.ab && this.ab.k === AB.T_SLAM)) { px += rand(-3, 3); py += rand(-3, 3); }
       this.drawAura(px, py);
       const pts = [];
       for (let i = 0; i < 16; i++) {
@@ -607,12 +1046,14 @@
   const BOSS_TYPES = [Warden, Seeker, Titan];
 
   // ---------------------------------------------------------------------------
-  // Jugadores
+  // Jugadores. hp = 1 vivo / 0 muerto (esperando reaparecer o "fuera"); lives = vidas que le quedan.
   // ---------------------------------------------------------------------------
-  const SPAWN_DX = [0, -70, 70, 140];
-  function makePlayer(id, name) {
-    return { id, name: name || 'Jugador', x: W / 2 + SPAWN_DX[id % 4], y: H * 0.7, r: 14, speed: 280, hp: 3,
-      invuln: 0, magnet: 0, rapid: 0, fireCd: 0, angle: -Math.PI / 2, trailAcc: 0, color: PLAYER_COLORS[id % 4],
+  function spawnPoint(idx) { const s = MAP.spawns[(idx | 0) % MAP.spawns.length]; return [s[0], s[1]]; }
+  function makePlayer(id, name, idx = 0) {
+    const [x, y] = spawnPoint(idx);
+    return { id, name: name || 'Jugador', slot: idx, x, y, r: 14, speed: 280, hp: 1, lives: START_LIVES, out: false,
+      invuln: 0, magnet: 0, rapid: 0, weapon: 0, wcd: [0, 0, 0], gcd: 0, tpCd: 1.0,
+      angle: -Math.PI / 2, trailAcc: 0, color: PLAYER_COLORS[id % 4],
       respawn: 0, firing: false, away: false, inp: null, seq: 0, lastInput: 0 };
   }
   function stepMove(p, mx, my, dt) {
@@ -620,6 +1061,36 @@
     if (ml > 1) { mx /= ml; my /= ml; }
     p.x = clamp(p.x + mx * p.speed * dt, p.r, W - p.r);
     p.y = clamp(p.y + my * p.speed * dt, p.r, H - p.r);
+    if (MAP.obstacles.length) { // se desliza por los pilares (empuje por la normal)
+      pushOut(p, p.r);
+      p.x = clamp(p.x, p.r, W - p.r); p.y = clamp(p.y, p.r, H - p.r);
+    }
+  }
+  // busca un punto libre (fuera de pilares y zonas prohibidas): hasta 10 intentos, nunca un bucle infinito
+  function freePoint(x, y, pad, spread) {
+    if (x >= pad && x <= W - pad && y >= pad && y <= H - pad && !forbidden(x, y, pad)) return [x, y];
+    for (let i = 0; i < 10; i++) {
+      const nx = spread ? clamp(x + rand(-spread, spread), pad, W - pad) : rand(pad + 40, W - pad - 40);
+      const ny = spread ? clamp(y + rand(-spread, spread), pad, H - pad) : rand(pad + 60, H - pad - 40);
+      if (!forbidden(nx, ny, pad)) return [nx, ny];
+    }
+    return null;
+  }
+  // reaparición segura: el punto de spawns_jugadores más lejos de enemigos, balas, minas, misiles y jefe
+  function safeSpawn() {
+    let best = MAP.spawns[0], bs = -Infinity;
+    for (const s of MAP.spawns) {
+      let d = Infinity;
+      const near = (x, y, r) => { d = Math.min(d, Math.hypot(x - s[0], y - s[1]) - r); };
+      for (const e of G.enemies) near(e.x, e.y, e.r);
+      for (const b of G.ebullets) near(b.x, b.y, b.r);
+      for (const m of G.mines) near(m.x, m.y, MINE_R);
+      for (const m of G.missiles) near(m.x, m.y, MISSILE_R);
+      if (G.boss) near(G.boss.x, G.boss.y, G.boss.r);
+      for (const p of G.players) if (p.hp > 0) near(p.x, p.y, 10); // no encimarse con otro jugador
+      if (d > bs) { bs = d; best = s; }
+    }
+    return [best[0], best[1]];
   }
 
   // ---------------------------------------------------------------------------
@@ -637,15 +1108,19 @@
     best: parseInt(lsGet(LS_BEST, '0'), 10) || 0,
     god: false,
     fps: 60,
+    mapIdx: 0,
     stats: { frames: 0, playFrames: 0, bossFrames: 0, shots: 0, kills: 0, bossesKilled: 0, maxParticles: 0,
-      maxEnemyBullets: 0, bossesSeen: [], shotsBy: {} },
+      maxEnemyBullets: 0, bossesSeen: [], shotsBy: {}, shotsByW: [0, 0, 0], explosions: 0, teleports: 0,
+      abilities: {}, abilityLog: [], deaths: 0, overs: 0, maxMsg: 0, maxSnap: 0, rpgBossHits: 0 },
   };
+  useMap(prefMap()); // preferencia guardada (si no está o está rota, Arena Neón)
 
   function initRound(roster) {
     roster = roster || [{ id: 0, name: G.name }];
-    G.players = roster.map((r) => makePlayer(r.id, r.name));
+    G.players = roster.map((r, i) => makePlayer(r.id, r.name, r.slot !== undefined ? r.slot : i));
     G.player = G.players.find((p) => p.id === NET.myId) || G.players[0];
-    G.enemies = []; G.bullets = []; G.ebullets = []; G.powerups = [];
+    G.enemies = []; G.bullets = []; G.ebullets = []; G.powerups = []; G.mines = []; G.missiles = [];
+    G.mineOrbit = 0;
     G.particles = new ParticleSystem();
     G.popups = []; G.pendingFx = [];
     G.boss = null; G.nextBossIdx = 0; G.bossesDefeated = 0; G.bossCooldown = 0;
@@ -653,7 +1128,8 @@
     G.score = 0; G.wave = 0; G.waveTimer = 0.5; G.elapsed = 0; G.survivalAcc = 0;
     G.shake = 0; G.simTime = 0; G.t0 = 0; G.nid = 0;
     G.banner = { text: '', c: WHITE, t: 0 };
-    G.newRecord = false;
+    G.newRecord = false; G.overMsg = '';
+    G.myWeapon = 0; // arma elegida (se aplica en la simulación; al reiniciar vuelve a la pistola)
     G.debugBossT = DEBUG_BOSS ? 1.0 : 0;
   }
   initRound();
@@ -681,6 +1157,14 @@
     G.banner = { text: txt, c, t };
     if (NET.rec) NET.ev.push(['n', txt, ci(c), t]);
   };
+  function bannerFor(p, txt, c, t = 2.0) { // cartel solo para un jugador (en el host o mandado a su cliente)
+    if (p === G.player) G.banner = { text: txt, c, t };
+    else if (NET.rec) NET.ev.push(['n', txt, ci(c), t, p.id]);
+  }
+  function bannerOthers(p, txt, c, t = 1.8) { // cartel para todos menos p
+    if (p !== G.player) G.banner = { text: txt, c, t };
+    if (NET.rec) NET.ev.push(['n', txt, ci(c), t, -1 - p.id]);
+  }
   G.popup = (x, y, txt, c, big = false) => {
     const life = big ? 1.3 : 0.8;
     G.popups.push({ x, y, txt, c, big, life, max: life });
@@ -696,9 +1180,13 @@
     const p = nearestAlive(x === undefined ? W / 2 : x, y === undefined ? H / 2 : y);
     return p ? [p.x, p.y] : [W / 2, H / 2];
   };
+  function logAbility(name) { // para los tests: cuándo arranca cada aviso
+    G.stats.abilities[name] = (G.stats.abilities[name] || 0) + 1;
+    if (G.stats.abilityLog.length < 200) G.stats.abilityLog.push([name, +G.simTime.toFixed(3)]);
+  }
 
   G.makeEnemy = (w, kind, x, y) => {
-    if (x === undefined) {
+    if (x === undefined) { // entran desde los bordes (los pilares están a más de 120 px de las paredes)
       const side = Math.floor(Math.random() * 4);
       if (side === 0) { x = rand(20, W - 20); y = -20; }
       else if (side === 1) { x = rand(20, W - 20); y = H + 20; }
@@ -722,15 +1210,18 @@
   function spawnPowerup(x, y, kind) {
     if (G.powerups.length >= 6) return;
     kind = kind || choice(['heal', 'magnet', 'score', 'score', 'rapid']);
-    if (x === undefined) { x = rand(60, W - 60); y = rand(80, H - 60); }
-    G.powerups.push({ id: ++G.nid, x: clamp(x, 30, W - 30), y: clamp(y, 50, H - 30), kind, r: 10, life: 9, bob: rand(0, TAU) });
+    const pt = x === undefined ? freePoint(-1, -1, 30, 0) : (freePoint(clamp(x, 30, W - 30), clamp(y, 50, H - 30), 30, 70) || freePoint(-1, -1, 30, 0));
+    if (!pt) return; // no hay lugar libre: se saltea
+    G.powerups.push({ id: ++G.nid, x: pt[0], y: pt[1], kind, r: 10, life: 9, bob: rand(0, TAU) });
   }
 
+  // v3: n = 2 + ola (menor: (2 + ola) / 3) -> v4: × 0,6 (-40%); el intervalo entre oleadas / 0,6 (-40% de tasa)
   function spawnWave(minor) {
     if (!minor) G.wave++;
     const w = Math.max(1, G.wave);
     let n = minor ? Math.max(1, Math.floor((2 + w) / 3)) : 2 + w;
-    n = Math.floor(n * (1 + 0.35 * (Math.max(1, G.players.length) - 1))); // más jugadores, más enemigos
+    n = Math.max(1, Math.round(n * ENEMY_COUNT_MULT));
+    n = Math.floor(n * (1 + 0.35 * (Math.max(1, G.players.length) - 1))); // más jugadores, más enemigos (+35%)
     n = Math.min(n, MAX_ENEMIES - G.enemies.length);
     for (let i = 0; i < n; i++) G.enemies.push(G.makeEnemy(w));
     if (!minor && Math.random() < 0.4) spawnPowerup();
@@ -750,7 +1241,14 @@
     G.particles.ring(W / 2, 60, boss.color, 400, 1.0, 5);
   }
 
+  function clearBossStuff() { // minas, misiles (y con el jefe se van el láser, las ondas y la marca)
+    for (const m of G.mines) G.particles.burst(m.x, m.y, RED, 10, 160, 4, 0.4);
+    for (const m of G.missiles) G.particles.burst(m.x, m.y, ORANGE, 8, 140, 4, 0.4);
+    G.mines = []; G.missiles = [];
+  }
+
   function onBossKilled(boss) {
+    if (G.boss !== boss) return; // ya contado (por ejemplo, bala y explosión en el mismo frame)
     G.stats.bossesKilled++;
     G.bossesDefeated++;
     G.score += boss.bonus;
@@ -764,6 +1262,7 @@
     G.addShake(16);
     for (const b of G.ebullets) G.particles.burst(b.x, b.y, b.c, 2, 60, 3, 0.3); // las balas enemigas se desintegran
     G.ebullets.length = 0;
+    clearBossStuff();
     if (NET.rec) NET.ev.push(['X']);
     spawnPowerup(boss.x - 40, boss.y, 'heal');
     spawnPowerup(boss.x + 40, boss.y, choice(['rapid', 'magnet']));
@@ -780,6 +1279,7 @@
   }
 
   function killEnemy(e, byPlayer) {
+    if (!e.alive) return;
     e.alive = false;
     const col = ENEMY_COLOR[e.kind];
     G.particles.burst(e.x, e.y, col, 20, 220, 6);
@@ -792,51 +1292,145 @@
       if (Math.random() < 0.05) spawnPowerup(e.x, e.y);
     }
   }
+  function killMine(m, byPlayer) {
+    if (m.dead) return;
+    m.dead = true;
+    G.particles.burst(m.x, m.y, RED, 22, 240, 6);
+    G.particles.ring(m.x, m.y, ORANGE, 50, 0.4, 3);
+    if (byPlayer) { G.score += MINE_PTS; G.popup(m.x, m.y - 10, `+${MINE_PTS}`, RED); }
+  }
+  function killMissile(m, byPlayer) {
+    if (m.dead) return;
+    m.dead = true;
+    G.particles.burst(m.x, m.y, ORANGE, 16, 200, 5);
+    if (byPlayer) { G.score += MISSILE_PTS; G.popup(m.x, m.y - 10, `+${MISSILE_PTS}`, ORANGE); }
+  }
 
+  function gameOver() {
+    if (G.state !== 'play') return; // una sola vez (3.11)
+    G.stats.overs++;
+    G.overMsg = G.players.length > 1 ? TXT.goCoop : TXT.goSolo;
+    setState('over');
+  }
+
+  // Le pega al jugador: pierde 1 vida (una sola por frame: queda muerto o invulnerable). Devuelve si le pegó.
   function damagePlayer(p) {
     if (G.winTimer > 0 || p.invuln > 0 || p.hp <= 0) return false;
-    if (!G.god) p.hp--;
-    p.invuln = 1.2;
     G.particles.burst(p.x, p.y, RED, 22, 220, 6);
     shakeFor(p, 8);
-    if (p.hp <= 0) {
+    if (G.god) { p.invuln = 1.2; return true; } // modo dios (tests): nunca pierde vidas
+    G.stats.deaths++;
+    p.lives = Math.max(0, p.lives - 1);
+    p.hp = 0;
+    p.firing = false;
+    G.particles.burst(p.x, p.y, p.color, 50, 300, 8);
+    G.particles.ring(p.x, p.y, p.color, 120, 0.7, 4);
+    if (p.lives > 0) {
+      p.respawn = RESPAWN_SHORT;
+      bannerFor(p, p.lives === 1 ? TXT.vidasUltima : fmt(TXT.vidasQuedan, { n: p.lives }), p.lives === 1 ? RED : p.color, 1.8);
+    } else {
+      p.out = true;
       p.respawn = RESPAWN_TIME;
-      p.firing = false;
-      G.particles.burst(p.x, p.y, p.color, 50, 300, 8);
-      G.particles.ring(p.x, p.y, p.color, 120, 0.7, 4);
-      if (!alivePlayers().length) setState('over');
-      else if (G.players.length > 1) G.showBanner(`${p.name} cayó: vuelve en ${RESPAWN_TIME} s`, p.color, 1.8);
+      if (G.players.every((q) => q.out)) gameOver();
+      else {
+        bannerFor(p, TXT.fueraCoop, p.color, 2.5);
+        bannerOthers(p, fmt(TXT.otroFuera, { nombre: p.name }), p.color);
+      }
     }
     return true;
   }
+  function revivePlayer(p) {
+    const wasOut = p.out;
+    if (wasOut) { p.out = false; p.lives = 1; } // en co-op vuelve con 1 vida
+    p.hp = 1; p.invuln = RESPAWN_INVULN; p.respawn = 0; p.tpCd = 1.0; // conserva el arma (spec §8, 1.25)
+    [p.x, p.y] = safeSpawn();
+    G.particles.ring(p.x, p.y, p.color, 90, 0.6, 3);
+    if (NET.rec) NET.ev.push(['tp', p.id, r0(p.x), r0(p.y)]); // que el cliente salte, no que cruce la pantalla
+    if (wasOut) {
+      bannerFor(p, TXT.revivido, LIME, 2.0);
+      bannerOthers(p, fmt(TXT.otroRevivido, { nombre: p.name }), p.color);
+    }
+  }
 
-  function addBullet(p, x, y, a) {
-    const b = { id: ++G.nid, x, y, vx: Math.cos(a) * BULLET_SPEED, vy: Math.sin(a) * BULLET_SPEED, life: 1.1, r: 5,
-      dmg: 1, c: p.color };
+  function addBullet(p, x, y, a, wi) {
+    const wp = WEAPONS[wi];
+    const b = { id: ++G.nid, x, y, vx: Math.cos(a) * wp.speed, vy: Math.sin(a) * wp.speed, life: wp.life, r: wp.r,
+      dmg: wp.dmg, c: p.color, w: wi, owner: p.id };
     G.bullets.push(b);
-    if (NET.rec) NET.ev.push(['pb', b.id, r0(x), r0(y), r0(b.vx), r0(b.vy), ci(b.c), r0(G.t0 * 1000)]);
+    if (NET.rec) NET.ev.push(['pb', b.id, r0(x), r0(y), r0(b.vx), r0(b.vy), ci(b.c), r0(G.t0 * 1000), wi]);
     if (p === G.player) G.stats.shots++;
     G.stats.shotsBy[p.id] = (G.stats.shotsBy[p.id] || 0) + 1;
+    G.stats.shotsByW[wi]++;
   }
 
   function fire(p, ax, ay) {
+    const wi = p.weapon, wp = WEAPONS[wi];
     let [dx, dy] = norm(ax - p.x, ay - p.y);
     if (!dx && !dy) { dx = Math.cos(p.angle); dy = Math.sin(p.angle); }
-    const a = Math.atan2(dy, dx) + rand(-1.5, 1.5) * deg;
+    const a = Math.atan2(dy, dx) + rand(-wp.spread, wp.spread) * deg;
     dx = Math.cos(a); dy = Math.sin(a);
     const mx = p.x + dx * (p.r + 8), my = p.y + dy * (p.r + 8);
-    addBullet(p, mx, my, a);
-    if (p.rapid > 0) addBullet(p, mx - dy * 7, my + dx * 7, a + 4 * deg); // disparo doble con el powerup
-    G.particles.spray(mx, my, dx, dy, WHITE, 3, 0.4, 180, 3, 0.15);
-    p.fireCd = p.rapid > 0 ? FIRE_COOLDOWN_RAPID : FIRE_COOLDOWN;
+    addBullet(p, mx, my, a, wi);
+    if (wi === 0 && p.rapid > 0) addBullet(p, mx - dy * 7, my + dx * 7, a + 4 * deg, 0); // pistola: disparo doble con el powerup
+    G.particles.spray(mx, my, dx, dy, wi === 2 ? ORANGE : WHITE, wi === 2 ? 8 : 3, 0.4, 180, 3, 0.15);
+    if (wi === 2) shakeFor(p, 3);
+    p.wcd[wi] = p.rapid > 0 ? wp.cdRapid : wp.cd;
+    p.gcd = p.rapid > 0 ? GLOBAL_CD_RAPID : GLOBAL_CD; // alternar armas no dispara más rápido (1.8)
+  }
+
+  // explosión del RPG: RPG_SPLASH a todo lo que esté a <= RPG_RADIUS del punto (centro), y el impacto directo
+  // suma el daño del cohete. Al jefe le pega una sola vez por cohete. A los jugadores, nunca.
+  function rpgExplode(b, x, y, direct) {
+    G.stats.explosions++;
+    G.stats.lastEx = [r1(x), r1(y)];
+    G.particles.burst(x, y, ORANGE, 34, 320, 7, 0.7);
+    G.particles.burst(x, y, YELLOW, 14, 200, 5, 0.5);
+    G.particles.ring(x, y, ORANGE, RPG_RADIUS, 0.45, 5);
+    G.addShake(5);
+    if (NET.rec) NET.ev.push(['ex', r0(x), r0(y)]);
+    for (const e of G.enemies) {
+      if (!e.alive) continue;
+      const d = Math.hypot(e.x - x, e.y - y);
+      const dmg = (e === direct ? b.dmg : 0) + (d <= RPG_RADIUS ? RPG_SPLASH : 0);
+      if (!dmg) continue;
+      e.hp -= dmg; e.flash = 0.06;
+      if (e.hp <= 0.001) killEnemy(e, true);
+    }
+    for (const m of G.mines) if (!m.dead && (m === direct || Math.hypot(m.x - x, m.y - y) <= RPG_RADIUS)) killMine(m, true);
+    for (const m of G.missiles) if (!m.dead && (m === direct || Math.hypot(m.x - x, m.y - y) <= RPG_RADIUS)) killMissile(m, true);
+    const boss = G.boss;
+    if (boss && boss.vulnerable) {
+      const inR = Math.hypot(boss.x - x, boss.y - y) <= RPG_RADIUS + boss.r;
+      const dmg = (direct === boss ? b.dmg : 0) + (inR ? RPG_SPLASH : 0);
+      if (dmg) { G.stats.rpgBossHits++; if (boss.damage(dmg)) onBossKilled(boss); }
+    }
   }
 
   // Controles de un jugador remoto (en el host). Si no llegan hace rato, la nave se queda quieta.
   function remoteInput(p) {
     if (!p.inp || p.away || performance.now() - p.lastInput > 600) {
-      return { mx: 0, my: 0, ax: p.x + Math.cos(p.angle) * 150, ay: p.y + Math.sin(p.angle) * 150, fire: false };
+      return { mx: 0, my: 0, ax: p.x + Math.cos(p.angle) * 150, ay: p.y + Math.sin(p.angle) * 150, fire: false, w: p.weapon };
     }
     return p.inp;
+  }
+
+  function tryPortal(p) {
+    for (const pp of MAP.portals) {
+      for (let i = 0; i < 2; i++) {
+        const e = pp.ends[i];
+        if ((p.x - e.x) ** 2 + (p.y - e.y) ** 2 >= e.r * e.r) continue;
+        const o = pp.ends[1 - i], k = o.r + p.r + 6;
+        G.particles.ring(e.x, e.y, pp.c, 60, 0.4, 3);
+        p.x = clamp(o.x + o.dx * k, p.r, W - p.r); p.y = clamp(o.y + o.dy * k, p.r, H - p.r);
+        p.tpCd = pp.cooldown;
+        G.particles.ring(o.x, o.y, pp.c, 60, 0.4, 3);
+        G.particles.burst(p.x, p.y, pp.c, 12, 160, 4, 0.4);
+        G.stats.teleports++;
+        if (NET.rec) NET.ev.push(['tp', p.id, r0(p.x), r0(p.y)]);
+        return true;
+      }
+    }
+    return false;
   }
 
   // ---------------------------------------------------------------------------
@@ -847,72 +1441,52 @@
     G.simTime += dt;
     // jugadores
     for (const p of G.players) {
+      for (let i = 0; i < 3; i++) p.wcd[i] = Math.max(0, p.wcd[i] - dt); // cada arma recarga aunque no la tengas
+      p.gcd = Math.max(0, p.gcd - dt);
       if (p.hp <= 0) { p.firing = false; continue; }
       const inp = p === G.player ? localInp : remoteInput(p);
+      if (inp.w !== undefined && inp.w !== p.weapon && inp.w >= 0 && inp.w < WEAPONS.length) {
+        p.weapon = inp.w | 0;
+        if (p === G.player) G.popup(p.x, p.y - 30, fmt(TXT.armaCambio, { arma: TXT.arma[p.weapon] }), WHITE);
+      }
       const ox = p.x, oy = p.y;
       stepMove(p, inp.mx, inp.my, dt);
       if (Math.hypot(inp.ax - p.x, inp.ay - p.y) > 2) p.angle = Math.atan2(inp.ay - p.y, inp.ax - p.x);
       p.invuln = Math.max(0, p.invuln - dt);
       p.magnet = Math.max(0, p.magnet - dt);
       p.rapid = Math.max(0, p.rapid - dt);
-      p.fireCd = Math.max(0, p.fireCd - dt);
+      if (p.tpCd > 0) p.tpCd = Math.max(0, p.tpCd - dt);
+      else if (MAP.portals.length) tryPortal(p);
       p.trailAcc += dt;
       if (Math.hypot(p.x - ox, p.y - oy) > 1 && p.trailAcc > 0.03) {
         G.particles.trail(p.x - Math.cos(p.angle) * 10, p.y - Math.sin(p.angle) * 10, p.color, 3, 0.25, true);
         p.trailAcc = 0;
       }
       p.firing = !!inp.fire;
-      if (inp.fire && p.fireCd <= 0) fire(p, inp.ax, inp.ay);
+      // (1e-6: que 1/12 s no se pierda un cuadro por redondeo; la pistola queda igual que la v3)
+      if (inp.fire && p.wcd[p.weapon] <= 1e-6 && p.gcd <= 1e-6) fire(p, inp.ax, inp.ay);
     }
     G.firing = localInp.fire;
 
-    // cooperativo: los caídos vuelven si queda alguien vivo
-    if (G.winTimer <= 0 && alivePlayers().length) {
-      for (const p of G.players) {
-        if (p.hp > 0) continue;
-        p.respawn -= dt;
-        if (p.respawn <= 0) {
-          p.hp = 2; p.invuln = 2; p.respawn = 0;
-          p.x = W / 2 + SPAWN_DX[p.id % 4]; p.y = H * 0.7;
-          G.particles.ring(p.x, p.y, p.color, 90, 0.6, 3);
-          G.popup(p.x, p.y - 30, `¡${p.name} volvió!`, p.color);
-        }
-      }
+    // reaparición (2 s) y, en co-op, revivir a los "fuera" (12 s) si queda alguien adentro
+    const anyIn = G.players.some((p) => !p.out);
+    for (const p of G.players) {
+      if (p.hp > 0) continue;
+      if (p.out && (G.winTimer > 0 || !anyIn)) continue;
+      p.respawn -= dt;
+      if (p.respawn <= 0) revivePlayer(p);
     }
 
-    // proyectiles de los jugadores
+    // proyectiles de los jugadores (con sub-pasos para que no atraviesen nada si el frame es largo)
     for (const b of G.bullets) {
-      b.x += b.vx * dt; b.y += b.vy * dt; b.life -= dt;
-      if (b.x < -20 || b.x > W + 20 || b.y < -20 || b.y > H + 20) b.life = 0;
-      if (b.life <= 0) continue;
-      for (const e of G.enemies) {
-        const rr = e.r + b.r;
-        if (e.alive && (e.x - b.x) ** 2 + (e.y - b.y) ** 2 < rr * rr) {
-          b.life = 0;
-          if (NET.rec) NET.ev.push(['x', b.id]);
-          e.hp -= b.dmg;
-          e.flash = 0.06;
-          G.particles.spray(b.x, b.y, -b.vx, -b.vy, WHITE, 3, 0.7, 140, 3, 0.2);
-          if (e.hp <= 0) killEnemy(e, true);
-          break;
-        }
-      }
-      const boss = G.boss;
-      if (b.life > 0 && boss) {
-        const rr = boss.r + b.r;
-        if ((boss.x - b.x) ** 2 + (boss.y - b.y) ** 2 < rr * rr) {
-          b.life = 0;
-          if (NET.rec) NET.ev.push(['x', b.id]);
-          if (boss.vulnerable) {
-            G.particles.spray(b.x, b.y, -b.vx, -b.vy, boss.color, 4, 0.8, 180, 4, 0.25);
-            if (boss.damage(b.dmg)) onBossKilled(boss);
-          } else {
-            G.particles.spray(b.x, b.y, -b.vx, -b.vy, CYAN, 2, 0.9, 120, 3, 0.2); // rebota en el escudo
-          }
-        }
-      }
+      const steps = Math.max(1, Math.ceil(Math.hypot(b.vx, b.vy) * dt / 12));
+      const sdt = dt / steps;
+      for (let s = 0; s < steps && b.life > 0; s++) stepBullet(b, sdt);
     }
     G.bullets = G.bullets.filter((b) => b.life > 0);
+    for (const b of G.bullets) if (b.w === 2 && Math.random() < 0.8) G.particles.trail(b.x - b.vx * 0.03, b.y - b.vy * 0.03, ORANGE, 4, 0.35);
+    G.mines = G.mines.filter((m) => !m.dead);
+    G.missiles = G.missiles.filter((m) => !m.dead);
 
     // enemigos comunes
     for (const e of G.enemies) {
@@ -928,6 +1502,15 @@
         }
       }
       e.x += e.vx * dt; e.y += e.vy * dt;
+      if (MAP.obstacles.length) { // se deslizan por el costado de los pilares (spec §8, 5.14)
+        const n = pushOut(e, e.r);
+        if (n && e.vx * n[0] + e.vy * n[1] < 0) { // toda la velocidad pasa a ir por el costado (así rodean el pilar)
+          let tx = -n[1], ty = n[0];
+          if (e.vx * tx + e.vy * ty < 0) { tx = -tx; ty = -ty; }
+          const sp = Math.hypot(e.vx, e.vy);
+          e.vx = tx * sp; e.vy = ty * sp;
+        }
+      }
       // rebote solo si se está yendo hacia afuera (deja entrar a los que nacen fuera)
       if ((e.x < e.r && e.vx < 0) || (e.x > W - e.r && e.vx > 0)) e.vx *= -1;
       if ((e.y < e.r && e.vy < 0) || (e.y > H - e.r && e.vy > 0)) e.vy *= -1;
@@ -954,7 +1537,7 @@
       G.stats.bossFrames++;
       if (boss.phase === 2 && !boss.phase2Announced) {
         boss.phase2Announced = true;
-        G.showBanner(`${boss.name}: FASE 2`, boss.color, 1.6);
+        G.showBanner(boss.name === 'TITAN' ? TXT.titanFase2 : `${boss.name}: FASE 2`, boss.color, 1.6);
         G.particles.ring(boss.x, boss.y, boss.color, 200, 0.8, 5);
         G.particles.burst(boss.x, boss.y, boss.color, 30, 260, 6);
         G.addShake(10);
@@ -968,12 +1551,19 @@
         }
       }
     }
+    updateMines(dt);
+    updateMissiles(dt);
 
-    // balas enemigas
+    // balas enemigas (se frenan en los pilares)
     const keep = [];
     for (const b of G.ebullets) {
       b.x += b.vx * dt; b.y += b.vy * dt;
       if (b.x < -30 || b.x > W + 30 || b.y < -30 || b.y > H + 30) continue;
+      if (MAP.obstacles.length && obstacleHit(b.x, b.y, b.r)) {
+        G.particles.spray(b.x, b.y, -b.vx, -b.vy, b.c, 3, 0.8, 120, 3, 0.2);
+        if (NET.rec) NET.ev.push(['x', b.id]);
+        continue;
+      }
       let hit = false;
       for (const p of G.players) {
         const rr = b.r + p.r * 0.7;
@@ -1002,7 +1592,7 @@
       if (!taker) continue;
       G.powerups.splice(G.powerups.indexOf(u), 1);
       G.particles.burst(u.x, u.y, POWERUP_COLORS[u.kind], 16, 150);
-      if (u.kind === 'heal') { taker.hp = Math.min(5, taker.hp + 1); G.popup(u.x, u.y, '+1 VIDA', LIME); }
+      if (u.kind === 'heal') { taker.lives = Math.min(MAX_LIVES, taker.lives + 1); G.popup(u.x, u.y, '+1 VIDA', LIME); }
       else if (u.kind === 'magnet') { taker.magnet = 6; G.popup(u.x, u.y, 'IMÁN', CYAN); }
       else if (u.kind === 'rapid') { taker.rapid = 6; G.popup(u.x, u.y, 'DISPARO RÁPIDO', ORANGE); }
       else { G.score += SCORE_POWERUP; G.popup(u.x, u.y, `+${SCORE_POWERUP}`, YELLOW); }
@@ -1026,10 +1616,10 @@
       startBoss(G.nextBossIdx);
     }
 
-    // oleadas (con jefe: menos enemigos y más espaciadas)
+    // oleadas (con jefe: menos enemigos y más espaciadas). v4: intervalo / 0,6
     G.waveTimer -= dt;
     if (G.waveTimer <= 0) {
-      const base = Math.max(2, WAVE_INTERVAL - G.wave * 0.12);
+      const base = Math.max(2, WAVE_INTERVAL - G.wave * 0.12) / SPAWN_RATE_MULT;
       if (G.boss) { spawnWave(true); G.waveTimer = base * 2.2; }
       else { if (G.winTimer <= 0) spawnWave(false); G.waveTimer = base; }
     }
@@ -1043,6 +1633,105 @@
         setState('win');
       }
     }
+  }
+
+  function bulletGone(b, sparkC) {
+    b.life = 0;
+    if (NET.rec) NET.ev.push(['x', b.id]);
+    if (sparkC) G.particles.spray(b.x, b.y, -b.vx, -b.vy, sparkC, 3, 0.7, 140, 3, 0.2);
+  }
+  function stepBullet(b, dt) {
+    b.x += b.vx * dt; b.y += b.vy * dt; b.life -= dt;
+    const rpg = b.w === 2;
+    if (b.x < 0 || b.x > W || b.y < 0 || b.y > H) { // el RPG explota en el borde (spec §8, 1.21)
+      if (rpg) { const x = clamp(b.x, 0, W), y = clamp(b.y, 0, H); bulletGone(b); rpgExplode(b, x, y, null); }
+      else if (b.x < -20 || b.x > W + 20 || b.y < -20 || b.y > H + 20) b.life = 0;
+      return;
+    }
+    if (b.life <= 0) { if (rpg) { bulletGone(b); rpgExplode(b, b.x, b.y, null); } return; }
+    if (MAP.obstacles.length && obstacleHit(b.x, b.y, b.r)) { // los pilares frenan las balas; el RPG explota ahí
+      bulletGone(b, rpg ? null : MAP.obsGlow);
+      if (rpg) rpgExplode(b, b.x, b.y, null);
+      return;
+    }
+    const hitObj = (o, r) => (o.x - b.x) ** 2 + (o.y - b.y) ** 2 < (r + b.r) ** 2;
+    for (const e of G.enemies) {
+      if (!e.alive || !hitObj(e, e.r)) continue;
+      if (rpg) { bulletGone(b); rpgExplode(b, b.x, b.y, e); return; }
+      bulletGone(b, WHITE);
+      e.hp -= b.dmg; e.flash = 0.06;
+      if (e.hp <= 0.001) killEnemy(e, true);
+      return;
+    }
+    for (const m of G.mines) {
+      if (m.dead || !hitObj(m, MINE_R)) continue;
+      if (rpg) { bulletGone(b); rpgExplode(b, b.x, b.y, m); return; }
+      bulletGone(b, RED);
+      m.hp -= b.dmg; m.flash = 0.06;
+      if (m.hp <= 0.001) killMine(m, true);
+      return;
+    }
+    for (const m of G.missiles) {
+      if (m.dead || !hitObj(m, MISSILE_R)) continue;
+      if (rpg) { bulletGone(b); rpgExplode(b, b.x, b.y, m); return; }
+      bulletGone(b, ORANGE);
+      m.hp -= b.dmg; m.flash = 0.06;
+      if (m.hp <= 0.001) killMissile(m, true);
+      return;
+    }
+    const boss = G.boss;
+    if (boss && hitObj(boss, boss.r)) {
+      if (!boss.vulnerable) { bulletGone(b, CYAN); return; } // rebota en el escudo
+      if (rpg) { bulletGone(b); rpgExplode(b, b.x, b.y, boss); return; }
+      bulletGone(b, boss.color);
+      if (boss.damage(b.dmg)) onBossKilled(boss);
+    }
+  }
+
+  function updateMines(dt) {
+    G.mineOrbit += MINE_SPIN * dt;
+    const boss = G.boss;
+    if (!boss || boss.name !== 'WARDEN') { if (G.mines.length) G.mines = []; return; }
+    for (const m of G.mines) { // orbitan alrededor del jefe y atraviesan los pilares (spec §8)
+      const a = G.mineOrbit + m.slot * Math.PI / 2;
+      m.x = boss.x + Math.cos(a) * MINE_ORBIT; m.y = boss.y + Math.sin(a) * MINE_ORBIT;
+      m.flash = Math.max(0, m.flash - dt);
+      for (const p of G.players) {
+        if (p.hp <= 0 || (m.x - p.x) ** 2 + (m.y - p.y) ** 2 >= (MINE_R + p.r) ** 2) continue;
+        damagePlayer(p); // si tiene invulnerabilidad no pierde vida, pero la mina explota igual
+        killMine(m, false);
+        G.addShake(6);
+        break;
+      }
+    }
+    G.mines = G.mines.filter((m) => !m.dead);
+  }
+
+  function updateMissiles(dt) {
+    for (const m of G.missiles) {
+      m.t += dt;
+      m.flash = Math.max(0, m.flash - dt);
+      if (m.t < MISSILE_HOMING) { // persigue ~4 s; después sigue derecho
+        let tg = G.players.find((p) => p.id === m.target && p.hp > 0);
+        if (!tg) { tg = nearestAlive(m.x, m.y); m.target = tg ? tg.id : -1; } // si el objetivo cae, cambia
+        if (tg) {
+          const want = Math.atan2(tg.y - m.y, tg.x - m.x);
+          const d = ((want - m.ang) % TAU + TAU + Math.PI) % TAU - Math.PI;
+          m.ang += clamp(d, -MISSILE_TURN * dt, MISSILE_TURN * dt);
+        }
+      }
+      m.x += Math.cos(m.ang) * MISSILE_SPEED * dt; m.y += Math.sin(m.ang) * MISSILE_SPEED * dt;
+      if (m.t > MISSILE_LIFE || m.x < -40 || m.x > W + 40 || m.y < -40 || m.y > H + 40) { m.dead = true; continue; }
+      if (MAP.obstacles.length && obstacleHit(m.x, m.y, MISSILE_R)) { killMissile(m, false); continue; } // se destruyen en los pilares
+      for (const p of G.players) {
+        if (p.hp <= 0 || (m.x - p.x) ** 2 + (m.y - p.y) ** 2 >= (MISSILE_R + p.r * 0.8) ** 2) continue;
+        damagePlayer(p);
+        killMissile(m, false);
+        break;
+      }
+      if (!m.dead && G.state === 'play' && Math.random() < 0.6) G.particles.trail(m.x - Math.cos(m.ang) * 10, m.y - Math.sin(m.ang) * 10, ORANGE, 3, 0.3);
+    }
+    G.missiles = G.missiles.filter((m) => !m.dead);
   }
 
   function updateFx(dt) {
@@ -1065,7 +1754,7 @@
   // ---------------------------------------------------------------------------
   // Multijugador (PeerJS / WebRTC). El host es la "verdad": simula y manda fotos del estado.
   // ---------------------------------------------------------------------------
-  const PROTO = 1;
+  const PROTO = 2; // v4 (armas, vidas, mapas, habilidades nuevas): no se mezcla con la v3
   const PEER_PREFIX = 'neondodge-';
   const CODE_CHARS = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789'; // sin I, L, O, 0, 1 (fáciles de confundir)
   const SEND_HZ = 20, INTERP_DELAY = 0.11;
@@ -1169,7 +1858,8 @@
     if (Array.isArray(d)) { // controles: ['i', seq, mx*100, my*100, ax, ay, disparando]
       const p = conn.pid !== undefined && G.players.find((q) => q.id === conn.pid);
       if (!p || d[0] !== 'i') return;
-      p.inp = { mx: (+d[2] || 0) / 100, my: (+d[3] || 0) / 100, ax: +d[4] || 0, ay: +d[5] || 0, fire: !!d[6] };
+      p.inp = { mx: (+d[2] || 0) / 100, my: (+d[3] || 0) / 100, ax: +d[4] || 0, ay: +d[5] || 0, fire: !!d[6],
+        w: typeof d[7] === 'number' && d[7] >= 0 ? clamp(d[7] | 0, 0, WEAPONS.length - 1) : undefined };
       p.seq = +d[1] || 0;
       p.lastInput = performance.now();
       p.away = false;
@@ -1209,15 +1899,16 @@
       }
       conn.pid = r.id;
       if (inGame() && !G.players.some((q) => q.id === r.id)) { // se suma con la partida empezada
-        const p = makePlayer(r.id, r.name);
+        const p = makePlayer(r.id, r.name, Math.max(0, NET.roster.indexOf(r)));
+        [p.x, p.y] = safeSpawn();
         p.invuln = 2;
         G.players.push(p);
         G.players.sort((a, b) => a.id - b.id);
       }
-      safeSend(conn, { t: 'w', id: r.id, code: NET.code });
+      safeSend(conn, { t: 'w', id: r.id, code: NET.code, mp: MAP.id });
       hostRoster();
       if (inGame()) {
-        safeSend(conn, { t: 'go' });
+        safeSend(conn, { t: 'go', mp: MAP.id });
         conn.extra = fullSyncEvents();
       }
       if (G.state === 'lobby') renderLobby();
@@ -1245,7 +1936,7 @@
     if (p && inGame()) {
       if (p.hp > 0) G.particles.ring(p.x, p.y, p.color, 80, 0.6, 3);
       G.players = G.players.filter((q) => q !== p);
-      if (G.state === 'play' && G.players.length && !alivePlayers().length) setState('over');
+      if (G.state === 'play' && G.players.length && G.players.every((q) => q.out)) gameOver(); // 6.14
     }
     toast(`${r.name} se fue de la partida`);
     hostEvent(['m', `${r.name} se fue de la partida`]);
@@ -1254,7 +1945,7 @@
   }
 
   function hostRoster() {
-    const msg = { t: 'lb', p: NET.roster.map((r) => [r.id, r.name]) };
+    const msg = { t: 'lb', p: NET.roster.map((r) => [r.id, r.name]), mp: MAP.id };
     for (const r of NET.roster) if (r.conn) safeSend(r.conn, msg);
   }
 
@@ -1262,19 +1953,19 @@
     if (NET.mode !== 'host') return;
     G.name = cleanName(nameInput.value);
     NET.roster[0].name = G.name;
-    initRound(NET.roster.map((r) => ({ id: r.id, name: r.name })));
+    initRound(NET.roster.map((r, i) => ({ id: r.id, name: r.name, slot: i })));
     G.round = (G.roundN = (G.roundN || 0) + 1);
     NET.ghosts.clear();
     NET.ev = []; NET.sendAcc = 1;
     setState('play');
-    for (const r of NET.roster) if (r.conn) { r.conn.extra = null; safeSend(r.conn, { t: 'go' }); }
+    for (const r of NET.roster) if (r.conn) { r.conn.extra = null; safeSend(r.conn, { t: 'go', mp: MAP.id }); }
     hostRoster();
   }
 
   // todas las balas que hay ahora (para el que entra con la partida empezada o se reconecta)
   function fullSyncEvents() {
     const t = r0(G.simTime * 1000), ev = [];
-    for (const b of G.bullets) ev.push(['pb', b.id, r0(b.x), r0(b.y), r0(b.vx), r0(b.vy), ci(b.c), t, r2(1.1 - b.life)]);
+    for (const b of G.bullets) ev.push(['pb', b.id, r0(b.x), r0(b.y), r0(b.vx), r0(b.vy), ci(b.c), t, b.w, r2(WEAPONS[b.w].life - b.life)]);
     for (const b of G.ebullets) ev.push(['eb', b.id, r0(b.x), r0(b.y), r0(b.vx), r0(b.vy), ci(b.c), b.r, t]);
     return ev;
   }
@@ -1285,27 +1976,39 @@
       t: 's', q: ++NET.seq, tm: r0(G.simTime * 1000), st: STATES.indexOf(G.state), sc: G.score, wv: G.wave,
       bd: G.bossesDefeated, nb: G.nextBossIdx, wt: G.winTimer > 0 ? 1 : 0,
       P: G.players.map((p) => [p.id, r1(p.x), r1(p.y), r2(p.angle), p.hp, r1(p.invuln), r1(p.magnet), r1(p.rapid),
-        r1(p.respawn), p.firing ? 1 : 0, p.away ? 1 : 0, p.seq || 0]),
+        r1(p.respawn), p.firing ? 1 : 0, p.away ? 1 : 0, p.seq || 0, p.lives, p.out ? 1 : 0, p.weapon, r2(p.wcd[2])]),
       E: G.enemies.map((e) => [e.id, KINDS.indexOf(e.kind), r0(e.x), r0(e.y), r2(e.angle), e.flash > 0 ? 1 : 0]),
       B: b ? [b.index, r1(b.x), r1(b.y), r2(b.angle), Math.ceil(b.hp), b.maxHp, b.state === 'enter' ? 0 : 1,
         b.flash > 0 ? 1 : 0, b.mode ? TITAN_MODES.indexOf(b.mode) : 0, r2(b.modeT || 0), r2(b.dx || 0), r2(b.dy || 0),
-        r2(b.lx || 0), r2(b.ly || 0)] : 0,
+        r2(b.lx || 0), r2(b.ly || 0),
+        b.ab ? b.ab.k : 0, b.ab ? r2(b.ab.t) : 0, b.ab ? r2(b.ab.a) : 0, b.ab ? r2(b.ab.b) : 0, b.ab ? r2(b.ab.c) : 0,
+        b.waves.map((w) => [r0(w.r), r2(w.rot)])] : 0,
+      M: G.mines.map((m) => [m.id, r0(m.x), r0(m.y), m.flash > 0 ? 1 : 0]),
+      R: G.missiles.map((m) => [m.id, r0(m.x), r0(m.y), r2(m.ang), m.flash > 0 ? 1 : 0]),
       U: G.powerups.map((u) => [u.id, PU_KINDS.indexOf(u.kind), r0(u.x), r0(u.y), r1(u.life), r2(u.bob)]),
     };
   }
 
   // Manda la foto a cada uno. Si hay muchos eventos, los parte (PeerJS acepta ~16 KB por mensaje JSON).
+  const MSG_LIMIT = 15000; // margen bajo los 16 KB
   function sendSnapTo(conn, snap, events) {
+    const snapLen = snap._len || (snap._len = JSON.stringify(snap).length);
+    G.stats.maxSnap = Math.max(G.stats.maxSnap, snapLen);
     const chunks = [];
-    let cur = [], size = 0;
+    let cur = [], size = 0, budget = Math.max(2000, MSG_LIMIT - snapLen - 20);
     for (const e of events) {
       const l = JSON.stringify(e).length + 1;
-      if (size + l > 11000 && cur.length) { chunks.push(cur); cur = []; size = 0; }
+      if (size + l > budget && cur.length) { chunks.push(cur); cur = []; size = 0; budget = MSG_LIMIT - 40; }
       cur.push(e); size += l;
     }
     chunks.push(cur);
-    safeSend(conn, Object.assign({}, snap, { ev: chunks[0] }));
-    for (let i = 1; i < chunks.length; i++) safeSend(conn, { t: 'e', q: snap.q, ev: chunks[i] });
+    sendMeasured(conn, Object.assign({}, snap, { _len: undefined, ev: chunks[0] }));
+    for (let i = 1; i < chunks.length; i++) sendMeasured(conn, { t: 'e', q: snap.q, ev: chunks[i] });
+  }
+  function sendMeasured(conn, msg) { // mide el tamaño real (para el test de 16 KB)
+    const l = JSON.stringify(msg).length;
+    if (l > G.stats.maxMsg) G.stats.maxMsg = l;
+    safeSend(conn, msg);
   }
 
   function hostBroadcast() {
@@ -1434,16 +2137,18 @@
       }
       case 'w':
         NET.myId = d.id; NET.reconnects = 0;
+        if (d.mp) useMap(d.mp, false); // el mapa del host (sin pisar mi preferencia)
         if (!inGame()) showLobby();
         break;
       case 'lb':
         NET.roster = d.p.map(([id, name]) => ({ id, name }));
         C.names = new Map(d.p);
+        if (d.mp && !inGame()) useMap(d.mp, false);
         if (G.state === 'lobby') renderLobby();
         break;
-      case 'go': clientStartRound(); break;
+      case 'go': if (d.mp) useMap(d.mp, false); clientStartRound(); break;
       case 'full': clientFail('La partida está llena (ya hay 4 jugadores).'); break;
-      case 'ver': clientFail('Tu versión del juego es distinta a la del host. Recargá la página (y que el host también).'); break;
+      case 'ver': clientFail(TXT.version); break;
       case 'end': clientLeave('El host cerró la partida.'); break;
       default: break; // 'pg' = sigo vivo
     }
@@ -1454,6 +2159,7 @@
     G.players = [];
     C.snaps = []; C.bullets.clear(); C.offset = null; C.renderT = 0; C.hist = []; C.pred = null; C.corr = [0, 0];
     C.boss = null; C.trail.clear(); C.lastSt = -1; C.lastQ = 0;
+    C.weaponSync = true; // al entrar o reconectar, tomo el arma que tengo en el host (no la piso con la pistola)
     setState('play');
   }
 
@@ -1478,6 +2184,7 @@
   function reconcile(s) {
     const e = s.Pm.get(NET.myId);
     if (!e) return;
+    if (C.weaponSync) { G.myWeapon = e[14] | 0; C.weaponSync = false; }
     const ack = e[11];
     while (C.hist.length && C.hist[0].s <= ack) C.hist.shift();
     if (e[4] <= 0) { C.pred = null; return; }
@@ -1501,9 +2208,23 @@
         G.popups.push({ x: e[1], y: e[2], txt: e[3], c: cd(e[4]), big: !!e[5], life, max: life });
         break;
       }
-      case 'n': G.banner = { text: e[1], c: cd(e[2]), t: e[3] }; break;
+      case 'n': { // e[4]: sin dato = para todos; >= 0 = solo ese jugador; < 0 = todos menos (-1 - e[4])
+        const to = e[4];
+        if (to === undefined || to === NET.myId || (to < 0 && -1 - to !== NET.myId)) G.banner = { text: e[1], c: cd(e[2]), t: e[3] };
+        break;
+      }
       case 'k': if (e[2] === undefined || e[2] === NET.myId) G.shake = Math.max(G.shake, e[1]); break;
-      case 'pb': C.bullets.set(e[1], { p: 1, x: e[2], y: e[3], vx: e[4], vy: e[5], c: cd(e[6]), ts: e[7] / 1000 - (e[8] || 0), r: 5 }); break;
+      case 'pb': {
+        const wp = WEAPONS[clamp(e[8] | 0, 0, WEAPONS.length - 1)];
+        C.bullets.set(e[1], { p: 1, x: e[2], y: e[3], vx: e[4], vy: e[5], c: cd(e[6]), ts: e[7] / 1000 - (e[9] || 0), r: wp.r,
+          w: WEAPONS.indexOf(wp), life: wp.life });
+        break;
+      }
+      case 'ex': // explosión del RPG (el daño lo calculó el host)
+        P.burst(e[1], e[2], ORANGE, 34, 320, 7, 0.7); P.burst(e[1], e[2], YELLOW, 14, 200, 5, 0.5);
+        P.ring(e[1], e[2], ORANGE, RPG_RADIUS, 0.45, 5); G.shake = Math.max(G.shake, 5);
+        break;
+      case 'tp': P.ring(e[2], e[3], WHITE, 50, 0.4, 3); break; // teletransporte o reaparición: salta, no se interpola
       case 'eb': C.bullets.set(e[1], { p: 0, x: e[2], y: e[3], vx: e[4], vy: e[5], c: cd(e[6]), r: e[7], ts: e[8] / 1000 }); break;
       case 'x': C.bullets.delete(e[1]); break;
       case 'X': for (const [id, b] of C.bullets) if (!b.p) C.bullets.delete(id); break;
@@ -1556,7 +2277,9 @@
       pl.x = lerp(p0[1], q[1], a); pl.y = lerp(p0[2], q[2], a); pl.angle = lerpAng(p0[3], q[3], a);
       pl.hp = p0[4]; pl.invuln = lerp(p0[5], q[5], a); pl.magnet = lerp(p0[6], q[6], a); pl.rapid = lerp(p0[7], q[7], a);
       pl.respawn = lerp(p0[8], q[8], a); pl.firing = !!p0[9]; pl.away = !!p0[10];
-      if (p0[4] <= 0 && q[4] > 0 && a > 0.5) { pl.hp = q[4]; pl.x = q[1]; pl.y = q[2]; }
+      pl.lives = p0[12]; pl.out = !!p0[13]; pl.weapon = p0[14] | 0; pl.wcd[2] = p0[15] || 0;
+      if (p0[4] <= 0 && q[4] > 0 && a > 0.5) { pl.hp = q[4]; pl.x = q[1]; pl.y = q[2]; pl.lives = q[12]; pl.out = !!q[13]; }
+      else if (Math.hypot(q[1] - p0[1], q[2] - p0[2]) > 120) { const z = a > 0.5 ? q : p0; pl.x = z[1]; pl.y = z[2]; } // portal: salta
       players.push(pl);
     };
     for (const p0 of s0.P) mk(p0, s1.Pm.get(p0[0]));
@@ -1609,8 +2332,19 @@
       bo.hp = b0[4]; bo.maxHp = b0[5]; bo.state = b0[6] ? 'fight' : 'enter'; bo.flash = b0[7] ? 0.05 : 0;
       if (bo instanceof Titan) { bo.mode = TITAN_MODES[b0[8]]; bo.modeT = b0[9]; bo.dx = b0[10]; bo.dy = b0[11]; }
       if (bo instanceof Seeker) { bo.lx = lerp(b0[12], b1[12], a); bo.ly = lerp(b0[13], b1[13], a); }
+      if (bo instanceof Seeker && Math.hypot(b1[1] - b0[1], b1[2] - b0[2]) > 100) { const z = a > 0.5 ? b1 : b0; bo.x = z[1]; bo.y = z[2]; } // teletransporte
+      bo.ab = b0[14] ? { k: b0[14], t: b0[15], a: b0[16], b: b0[17], c: b0[18] } : null;
+      if (bo.ab && b1[14] === b0[14]) { bo.ab.t = lerp(b0[15], b1[15], a); bo.ab.c = lerp(b0[18], b1[18], a); }
+      const w0 = b0[19] || [], w1 = b1[19] || [];
+      bo.waves = w0.map((w, i) => ({ r: w1.length === w0.length ? lerp(w[0], w1[i][0], a) : w[0], rot: w[1] }));
       G.boss = bo;
     } else { G.boss = null; C.boss = null; }
+
+    // minas y misiles
+    const Mm = new Map((s1.M || []).map((m) => [m[0], m])), Rm = new Map((s1.R || []).map((m) => [m[0], m]));
+    G.mines = (s0.M || []).map((m0) => { const m1 = Mm.get(m0[0]) || m0; return { id: m0[0], x: lerp(m0[1], m1[1], a), y: lerp(m0[2], m1[2], a), flash: m0[3] ? 0.05 : 0, slot: 0 }; });
+    G.missiles = (s0.R || []).map((m0) => { const m1 = Rm.get(m0[0]) || m0; return { id: m0[0], x: lerp(m0[1], m1[1], a), y: lerp(m0[2], m1[2], a), ang: lerpAng(m0[3], m1[3], a), flash: m0[4] ? 0.05 : 0 }; });
+    for (const m of G.missiles) if (Math.random() < 0.5) G.particles.trail(m.x - Math.cos(m.ang) * 10, m.y - Math.sin(m.ang) * 10, ORANGE, 3, 0.3);
 
     // balas: se mueven solas en línea recta desde que salieron
     const pb = [], eb = [];
@@ -1619,8 +2353,10 @@
       if (age < 0) continue;
       const x = b.x + b.vx * age, y = b.y + b.vy * age;
       const m = b.p ? 20 : 30;
-      if ((b.p && age > 1.1) || x < -m || x > W + m || y < -m || y > H + m) { C.bullets.delete(id); continue; }
-      (b.p ? pb : eb).push({ x, y, vx: b.vx, vy: b.vy, c: b.c, r: b.r });
+      if ((b.p && age > b.life) || x < -m || x > W + m || y < -m || y > H + m) { C.bullets.delete(id); continue; }
+      if (MAP.obstacles.length && obstacleHit(x, y, b.r)) { C.bullets.delete(id); continue; } // se frena en el pilar
+      if (b.w === 2 && Math.random() < 0.8) G.particles.trail(x - b.vx * 0.03, y - b.vy * 0.03, ORANGE, 4, 0.35);
+      (b.p ? pb : eb).push({ x, y, vx: b.vx, vy: b.vy, c: b.c, r: b.r, w: b.w || 0 });
     }
     G.bullets = pb; G.ebullets = eb;
   }
@@ -1632,7 +2368,7 @@
     const seq = ++C.seq;
     C.hist.push({ s: seq, mx, my, dt });
     if (C.hist.length > 300) C.hist.shift();
-    safeSend(NET.conn, ['i', seq, r0(mx * 100), r0(my * 100), r0(inp.ax || 0), r0(inp.ay || 0), playing && inp.fire ? 1 : 0]);
+    safeSend(NET.conn, ['i', seq, r0(mx * 100), r0(my * 100), r0(inp.ax || 0), r0(inp.ay || 0), playing && inp.fire ? 1 : 0, C.weaponSync ? -1 : G.myWeapon]);
     G.firing = playing && inp.fire;
     if (C.pred && playing && G.player && G.player.hp > 0) {
       const tmp = { x: C.pred.x, y: C.pred.y, r: 14, speed: 280 };
@@ -1666,7 +2402,17 @@
     hasTouch: navigator.maxTouchPoints > 0 || 'ontouchstart' in window,
     move: null, // {id, ox, oy, x, y} en coordenadas de pantalla (CSS px)
     fire: null,
+    wTap: 0, wheelT: 0,
   };
+  // arma que tengo en la mano (la mía al instante; la simulación del host la confirma)
+  function myWeapon() { return G.myWeapon | 0; }
+  function switchWeapon(w) { // 1/2/3, rueda, Q o botón táctil. En pausa, en el menú o muerto no hace nada (1.27, 3.7)
+    if (G.state !== 'play' || !G.player || G.player.hp <= 0) return;
+    const nw = ((w % WEAPONS.length) + WEAPONS.length) % WEAPONS.length;
+    if (nw === G.myWeapon) return;
+    G.myWeapon = nw;
+    if (NET.mode === 'client') G.popups.push({ x: G.player.x, y: G.player.y - 30, txt: fmt(TXT.armaCambio, { arma: TXT.arma[nw] }), c: WHITE, big: false, life: 0.8, max: 0.8 });
+  }
 
   function releaseSticks() { input.move = null; input.fire = null; input.mouse.buttons = 0; }
 
@@ -1681,6 +2427,8 @@
     input.mode = 'touch';
     input.hasTouch = true;
     if (G.state !== 'play') return;
+    const wb = weaponButton();
+    if (Math.hypot(e.clientX - wb.x, e.clientY - wb.y) < wb.r + 10) { input.wTap = performance.now(); switchWeapon(myWeapon() + 1); return; }
     const side = e.clientX < view.w / 2 ? 'move' : 'fire';
     if (input[side]) return;
     input[side] = { id: e.pointerId, ox: e.clientX, oy: e.clientY, x: e.clientX, y: e.clientY };
@@ -1773,7 +2521,7 @@
       }
     }
     G.aim = [ax, ay];
-    return { mx, my, ax, ay, fire: fireOn };
+    return { mx, my, ax, ay, fire: fireOn, w: G.myWeapon };
   }
 
   // ---------------------------------------------------------------------------
@@ -1781,25 +2529,37 @@
   // ---------------------------------------------------------------------------
   function drawWorld() {
     bg.draw();
+    drawMapGeometry();
     for (const u of G.powerups) drawPowerup(u);
     if (G.enemies.length) {
       additive(() => { for (const e of G.enemies) glow(e.x, e.y, e.r * 3, ENEMY_COLOR[e.kind], 0.65); });
       for (const e of G.enemies) drawEnemy(e);
     }
-    if (G.boss) G.boss.draw();
+    if (G.boss) { G.boss.draw(); G.boss.drawAbilities(); }
+    for (const m of G.mines) drawMine(m);
+    for (const m of G.missiles) drawMissile(m);
     if (G.bullets.length) {
-      additive(() => { for (const b of G.bullets) glow(b.x, b.y, 18, b.c || CYAN, 0.9); });
-      ctx.strokeStyle = rgb(WHITE);
-      ctx.lineWidth = 3;
+      additive(() => { for (const b of G.bullets) glow(b.x, b.y, b.w === 2 ? 34 : b.w === 1 ? 11 : 18, b.w === 2 ? ORANGE : (b.c || CYAN), 0.9); });
       ctx.lineCap = 'round';
-      ctx.beginPath();
-      for (const b of G.bullets) {
-        const [nx, ny] = norm(b.vx, b.vy);
-        ctx.moveTo(b.x - nx * 12, b.y - ny * 12);
-        ctx.lineTo(b.x, b.y);
+      for (const [wi, len, lw] of [[0, 12, 3], [1, 7, 2]]) { // pistola: raya de 12 px; ametralladora: más chica
+        ctx.strokeStyle = rgb(WHITE); ctx.lineWidth = lw;
+        ctx.beginPath();
+        for (const b of G.bullets) {
+          if ((b.w || 0) !== wi) continue;
+          const [nx, ny] = norm(b.vx, b.vy);
+          ctx.moveTo(b.x - nx * len, b.y - ny * len);
+          ctx.lineTo(b.x, b.y);
+        }
+        ctx.stroke();
       }
-      ctx.stroke();
       ctx.lineCap = 'butt';
+      for (const b of G.bullets) { // cohete del RPG
+        if (b.w !== 2) continue;
+        const [nx, ny] = norm(b.vx, b.vy);
+        poly([[b.x + nx * 10, b.y + ny * 10], [b.x - nx * 8 - ny * 5, b.y - ny * 8 + nx * 5], [b.x - nx * 8 + ny * 5, b.y - ny * 8 - nx * 5]]);
+        ctx.fillStyle = rgb(ORANGE); ctx.fill();
+        ctx.strokeStyle = rgb(WHITE); ctx.lineWidth = 1.5; ctx.stroke();
+      }
     }
     G.particles.draw();
     if (G.ebullets.length) {
@@ -1848,13 +2608,9 @@
     const p = G.player;
     const multi = NET.mode !== 'solo';
     text(`SCORE  ${G.score}`, 16, 12, 22, WHITE, { bold: true, glow: 8 });
-    // vidas (a la izquierda: arriba a la derecha están los botones de pausa/reinicio)
-    for (let i = 0; i < p.hp; i++) {
-      const x = 26 + i * 26, y = 52;
-      additive(() => glow(x, y, 22, MAGENTA, 0.55));
-      ctx.fillStyle = rgb(MAGENTA); circle(x, y, 8); ctx.fill();
-      ctx.strokeStyle = rgb(WHITE); ctx.lineWidth = 1; ctx.stroke();
-    }
+    // vidas como corazones (a la izquierda: arriba a la derecha están los botones de pausa/reinicio)
+    const lives = p.lives === undefined ? START_LIVES : p.lives;
+    for (let i = 0; i < MAX_LIVES; i++) drawHeart(24 + i * 24, 50, 9, i < lives);
     text(`OLA ${G.wave}   JEFES ${G.bossesDefeated}/${BOSS_TYPES.length}`, 16, 68, 15, DIM);
     let ty = 88;
     if (!G.boss && G.nextBossIdx < BOSS_TYPES.length && G.winTimer <= 0) {
@@ -1866,18 +2622,20 @@
       ty += 6;
       for (const q of G.players) {
         ctx.fillStyle = rgb(q.color); circle(22, ty + 7, 5); ctx.fill();
-        const st = q.hp > 0 ? '♥'.repeat(Math.max(0, q.hp)) : `vuelve en ${Math.max(0, Math.ceil(q.respawn))} s`;
+        const hearts = '♥'.repeat(Math.max(0, q.lives | 0));
+        const st = q.out ? `FUERA · vuelve en ${Math.max(0, Math.ceil(q.respawn))} s` : q.hp > 0 ? hearts : `${hearts} · reapareciendo`;
         text(`${q.name}${q.id === NET.myId ? ' (vos)' : ''}  ${st}${q.away ? '  ausente' : ''}`, 32, ty, 13, q.hp > 0 ? q.color : DIM);
         ty += 18;
       }
       text(`SALA ${NET.code}${NET.mode === 'host' ? ' · sos el host' : ''}`, 16, ty + 2, 12, DIM, { alpha: 0.9 });
     }
-    let y = H - 26;
+    drawWeaponHud(p);
+    let y = H - 56;
     if (p.hp > 0 && p.magnet > 0) { text(`IMÁN ${p.magnet.toFixed(1)}s`, W / 2, y, 15, CYAN, { align: 'center' }); y -= 20; }
     if (p.hp > 0 && p.rapid > 0) text(`DISPARO RÁPIDO ${p.rapid.toFixed(1)}s`, W / 2, y, 15, ORANGE, { align: 'center' });
-    if (multi && p.hp <= 0 && G.state === 'play') {
-      text(`CAÍSTE · volvés en ${Math.max(0, Math.ceil(p.respawn))} s (o cuando caiga un jefe)`, W / 2, H / 2 + 120, 20, WHITE,
-        { align: 'center', base: 'middle', bold: true, glow: 8 });
+    if (p.hp <= 0 && G.state === 'play') {
+      const msg = p.out ? `${TXT.fueraCoop} (${Math.max(0, Math.ceil(p.respawn))} s)` : TXT.reaparece;
+      text(msg, W / 2, H / 2 + 120, 20, WHITE, { align: 'center', base: 'middle', bold: true, glow: 8 });
     }
     if (G.boss) drawBossBar(G.boss);
     text(`${Math.round(G.fps)} FPS`, W - 12, H - 20, 13, G.fps >= 55 ? LIME : YELLOW, { align: 'right', alpha: 0.8 });
@@ -1885,6 +2643,42 @@
       const k = clamp(G.banner.t / 0.4, 0, 1);
       text(G.banner.text, W / 2, 92, 28, G.banner.c, { align: 'center', base: 'middle', bold: true, alpha: k, glow: 12 });
     }
+  }
+
+  function drawHeart(x, y, s, full) {
+    ctx.beginPath();
+    ctx.moveTo(x, y + s * 0.9);
+    ctx.bezierCurveTo(x - s * 1.4, y - s * 0.1, x - s * 0.7, y - s * 1.1, x, y - s * 0.35);
+    ctx.bezierCurveTo(x + s * 0.7, y - s * 1.1, x + s * 1.4, y - s * 0.1, x, y + s * 0.9);
+    if (full) {
+      additive(() => glow(x, y, s * 2.6, MAGENTA, 0.5));
+      ctx.fillStyle = rgb(MAGENTA); ctx.fill();
+      ctx.strokeStyle = rgb(WHITE); ctx.lineWidth = 1; ctx.stroke();
+    } else { ctx.strokeStyle = rgb(DIM, 0.6); ctx.lineWidth = 1.5; ctx.stroke(); }
+  }
+  // arma actual (abajo al medio) y, con el RPG, la barrita de recarga
+  function drawWeaponHud(p) {
+    const cur = myWeapon(), y = H - 24;
+    const labels = TXT.arma.map((n, i) => `${i + 1} ${n}`);
+    ctx.font = `bold 14px ${FONT}`;
+    const ws = labels.map((l) => ctx.measureText(l).width + 18), total = ws.reduce((a, b) => a + b, 0);
+    let x = W / 2 - total / 2;
+    labels.forEach((l, i) => {
+      const on = i === cur;
+      if (on) { ctx.fillStyle = rgb(CYAN, 0.18); ctx.fillRect(x, y - 3, ws[i] - 6, 21); ctx.strokeStyle = rgb(CYAN); ctx.lineWidth = 1.5; ctx.strokeRect(x, y - 3, ws[i] - 6, 21); }
+      text(l, x + (ws[i] - 6) / 2, y, 14, on ? WHITE : DIM, { align: 'center', bold: on, alpha: on ? 1 : 0.7 });
+      x += ws[i];
+    });
+    G.hudWeapon = fmt(TXT.armaHud, { arma: TXT.arma[cur] }); // (lo leen los tests)
+    if (cur === 2) { // barrita de recarga del RPG: llena = listo
+      const full = p.rapid > 0 ? WEAPONS[2].cdRapid : WEAPONS[2].cd;
+      const k = clamp(1 - (p.wcd ? p.wcd[2] : 0) / full, 0, 1);
+      const bw = 120, bx = W / 2 - bw / 2, by = y - 12;
+      ctx.fillStyle = 'rgba(25,20,40,0.9)'; ctx.fillRect(bx, by, bw, 6);
+      ctx.fillStyle = rgb(k >= 1 ? LIME : ORANGE); ctx.fillRect(bx, by, bw * k, 6);
+      if (k < 1) text(TXT.recargando, W / 2 + bw / 2 + 8, by - 4, 12, ORANGE, { alpha: 0.9 });
+      G.hudRpg = k;
+    } else G.hudRpg = -1;
   }
 
   function drawCrosshair() {
@@ -1925,11 +2719,23 @@
     ctx.globalAlpha = 1;
   }
 
+  // botón de arma: chico, arriba del botón de disparo (no lo tapa); cada toque cicla 1 → 2 → 3
+  function weaponButton() {
+    const m = 30 + STICK_R;
+    return { x: view.w - m, y: view.h - m - 10 - STICK_R - 8 - 52, r: 30 };
+  }
   function drawTouchControls() {
     if (G.state !== 'play' || !(input.hasTouch || input.mode === 'touch')) return;
     const m = 30 + STICK_R;
     drawStick(input.move, m, view.h - m - 10, CYAN, 'MOVER', !!input.move);
     drawStick(input.fire, view.w - m, view.h - m - 10, ORANGE, 'DISPARAR', !!input.fire);
+    const b = weaponButton(), on = performance.now() - input.wTap < 150;
+    ctx.globalAlpha = 0.85;
+    ctx.fillStyle = rgb(CYAN, on ? 0.45 : 0.15); circle(b.x, b.y, b.r); ctx.fill();
+    ctx.strokeStyle = rgb(CYAN, 0.9); ctx.lineWidth = 2; ctx.stroke();
+    text(TXT.armaBoton, b.x, b.y - 12, 10, CYAN, { align: 'center', base: 'middle', bold: true });
+    text(`${myWeapon() + 1} ${['PIST', 'AMET', 'RPG'][myWeapon()]}`, b.x, b.y + 6, 12, WHITE, { align: 'center', base: 'middle', bold: true });
+    ctx.globalAlpha = 1;
   }
 
   function render() {
@@ -2019,6 +2825,9 @@
       ? 'Pasales el código o el link a tus amigos. Cuando estén todos, tocá EMPEZAR.'
       : 'Esperando a que el host empiece la partida…';
     $('lobby-ipad-tip').classList.toggle('hidden', !(host && IS_IPAD));
+    $('lobby-map').classList.toggle('hidden', !host);
+    $('lobby-map-name').textContent = fmt(TXT.mapaElegido, { mapa: MAP.nombre }) + (host ? '' : ` · ${TXT.mapaLoEligeHost}`);
+    renderMapPickers();
     $('btn-share').classList.toggle('hidden', !navigator.share);
   }
 
@@ -2059,8 +2868,9 @@
     const who = mode === 'solo' ? G.name : `Equipo: ${G.players.map((p) => p.name).join(', ')}`;
     $('end-stats').textContent = `${who} · Puntaje ${G.score} · Olas ${G.wave} · Jefes ${G.bossesDefeated}/${BOSS_TYPES.length}`;
     $('end-record').textContent = G.newRecord ? '¡Nuevo récord!' : `Récord: ${G.best}`;
-    $('end-msg').textContent = mode === 'client' ? 'Esperando a que el host arranque otra partida…' : '';
-    $('end-msg').classList.toggle('hidden', mode !== 'client');
+    const overMsg = win ? '' : (G.overMsg || (G.players.length > 1 ? TXT.goCoop : TXT.goSolo));
+    $('end-msg').textContent = [overMsg, mode === 'client' ? 'Esperando a que el host arranque otra partida…' : ''].filter(Boolean).join(' ');
+    $('end-msg').classList.toggle('hidden', !$('end-msg').textContent);
     $('btn-retry').classList.toggle('hidden', mode === 'client');
     $('btn-retry').textContent = mode === 'host' ? 'JUGAR DE NUEVO' : 'REINTENTAR';
     $('btn-end-menu').textContent = mode === 'host' ? 'Cerrar partida' : mode === 'client' ? 'Salir de la partida' : 'Menú';
@@ -2081,6 +2891,8 @@
   }
   function toMenu() {
     if (NET.mode === 'solo') NET.myId = 0;
+    useMap(prefMap()); // vuelve a mi mapa (en una sala ajena jugué el del host)
+    renderMapPickers();
     initRound();
     setState('menu');
     showMenuSection('main');
@@ -2119,6 +2931,34 @@
     showMenuSection('join');
     if (input.mode !== 'touch') setTimeout(() => codeInput.focus(), 50);
   }
+
+  // selector de mapa (menú y sala del host)
+  function renderMapPickers() {
+    for (const box of [$('map-pick'), $('lobby-map')]) {
+      if (!box) continue;
+      if (!box.childElementCount) {
+        MAPS.forEach((m, i) => {
+          const b = document.createElement('button');
+          b.type = 'button'; b.className = 'mapbtn'; b.dataset.map = m.id;
+          b.innerHTML = `<b></b><small></small>`;
+          b.firstChild.textContent = TXT.mapa[i] || m.nombre;
+          b.lastChild.textContent = TXT.mapaDesc[i] || '';
+          b.style.setProperty('--mc', rgb(m.principal));
+          b.addEventListener('click', (e) => { e.preventDefault(); pickMap(m.id); });
+          box.appendChild(b);
+        });
+      }
+      for (const b of box.children) b.classList.toggle('on', b.dataset.map === MAP.id);
+    }
+  }
+  function pickMap(id) {
+    if (NET.mode === 'client') return; // en una sala lo elige el host
+    useMap(id, true);
+    renderMapPickers();
+    if (NET.mode === 'host' && G.state === 'lobby') { hostRoster(); renderLobby(); }
+  }
+  renderMapPickers();
+  $('menu-tip').textContent = choice(TXT.tips);
 
   const tap = (el, fn) => el.addEventListener('click', (e) => { e.preventDefault(); fn(); });
   tap($('btn-play'), () => { menuError(''); startGame(); });
@@ -2168,6 +3008,10 @@
       else if ((st === 'over' || st === 'win') && !endEl.classList.contains('hidden') && NET.mode === 'solo') toMenu();
     } else if (c === 'KeyR' && inGame()) {
       restartPressed();
+    } else if (/^(Digit|Numpad)[123]$/.test(c)) {
+      switchWeapon(+c.slice(-1) - 1);
+    } else if (c === 'KeyQ') {
+      switchWeapon(myWeapon() + 1);
     } else if (c === 'Escape') {
       if (st === 'play') { if (NET.mode === 'client') pausePressed(); else setState('pause'); }
       else if (NET.mode === 'solo' && st !== 'menu') toMenu();
@@ -2175,6 +3019,16 @@
     }
   });
   window.addEventListener('keyup', (e) => input.keys.delete(e.code));
+  // rueda: un "clic" (o un gesto de trackpad, que manda muchos eventos seguidos) = un arma.
+  // Un gesto nuevo empieza cuando pasan 150 ms sin eventos de rueda.
+  window.addEventListener('wheel', (e) => {
+    if (G.state !== 'play') return;
+    e.preventDefault();
+    const now = performance.now(), fresh = now - input.wheelT > 150;
+    input.wheelT = now;
+    if (!fresh || Math.abs(e.deltaY) < 1) return;
+    switchWeapon(myWeapon() + (e.deltaY > 0 ? 1 : -1));
+  }, { passive: false });
   window.addEventListener('blur', () => { input.keys.clear(); releaseSticks(); });
   document.addEventListener('visibilitychange', () => {
     if (document.hidden) {
@@ -2221,6 +3075,7 @@
   let last = performance.now(), fpsAcc = 0, fpsFrames = 0, avgDt = 1 / 60, slowTime = 0;
   function frame(now) {
     requestAnimationFrame(frame);
+    const w0 = performance.now();
     let dt = (now - last) / 1000;
     last = now;
     if (!(dt > 0)) return;
@@ -2243,7 +3098,7 @@
       clientNetTick(realDt);
     } else {
       if (NET.mode === 'host') NET.rec = inGame() && NET.roster.length > 1;
-      if (G.state === 'play') {
+      if (G.state === 'play' && !G.frozen) { // (frozen: solo lo usan los tests para simular cuadro a cuadro)
         updatePlay(dt, readInput());
         updateFx(dt);
         G.stats.playFrames++;
@@ -2257,6 +3112,9 @@
     G.stats.maxParticles = Math.max(G.stats.maxParticles, G.particles.parts.length);
     G.stats.maxEnemyBullets = Math.max(G.stats.maxEnemyBullets, G.ebullets.length);
     render();
+    const wk = performance.now() - w0; // costo de CPU del cuadro (simulación + dibujo), para medir rendimiento
+    G.stats.workMs = (G.stats.workMs || wk) * 0.95 + wk * 0.05;
+    if (G.state === 'play') G.stats.maxWorkMs = Math.max(G.stats.maxWorkMs || 0, wk);
   }
   setState('menu');
   if (salaParam) {
@@ -2276,13 +3134,31 @@
     get mode() { return NET.mode; },
     info() {
       return { mode: NET.mode, state: G.state, myId: NET.myId, code: NET.code, roster: NET.roster.map((r) => [r.id, r.name]),
-        players: G.players.map((p) => ({ id: p.id, name: p.name, x: r1(p.x), y: r1(p.y), hp: p.hp, respawn: r1(p.respawn), away: p.away })),
+        players: G.players.map((p) => ({ id: p.id, name: p.name, x: r1(p.x), y: r1(p.y), hp: p.hp, lives: p.lives, out: !!p.out,
+          weapon: p.weapon, respawn: r1(p.respawn), invuln: r1(p.invuln), away: p.away })),
+        map: MAP.id, myWeapon: G.myWeapon, hudWeapon: G.hudWeapon, hudRpg: G.hudRpg, mines: G.mines.length, missiles: G.missiles.length,
+        ab: G.boss && G.boss.ab ? G.boss.ab.k : 0, waves: G.boss ? (G.boss.waves || []).length : 0, overMsg: G.overMsg,
         score: G.score, wave: G.wave, enemies: G.enemies.length, ebullets: G.ebullets.length, bullets: G.bullets.length,
         boss: G.boss ? { name: G.boss.name, hp: G.boss.hp, maxHp: G.boss.maxHp, state: G.boss.state } : null,
         fps: r1(G.fps), menuMsg: $('menu-msg').textContent, toast: toastEl.classList.contains('hidden') ? '' : toastEl.textContent };
     },
     debug: {
-      damage(id) { const p = G.players.find((q) => q.id === id); if (p) { p.invuln = 0; p.hp = 1; damagePlayer(p); } },
+      damage(id) { const p = G.players.find((q) => q.id === id); if (p) { p.invuln = 0; damagePlayer(p); } },
+      MAPS, WEAPONS, useMap, safeSpawn, forbidden, obstacleHit, rpgExplode, damagePlayer, switchWeapon, initRound, spawnWave,
+      stepMove, makePlayer, setState, pushOut, freePoint, AB, WARN, BOSS_TYPES,
+      K: { RING_SLOTS, RING_GAP, RING_SPEED, MINE_MAX, MINE_ORBIT, MINE_R, MINE_HP, MISSILE_SPEED, MISSILE_HOMING, MISSILE_HP, MISSILE_R,
+        LASER_SWEEP, LASER_TIME, LASER_HALF, WAVE_SPEED, WAVE_HALF, WAVE_GAPS, WAVE_GAP_W, RPG_RADIUS, RPG_SPLASH, START_LIVES,
+        RESPAWN_SHORT, RESPAWN_INVULN, RESPAWN_TIME, ENEMY_COUNT_MULT, SPAWN_RATE_MULT, MAX_ENEMIES, GLOBAL_CD, PROTO, TELE_DIST },
+      // simula n cuadros de 1/60 s con controles fijos (para pruebas deterministas, con G.frozen = true)
+      step(n, inp) {
+        const p = G.player;
+        for (let i = 0; i < n; i++) {
+          const q = Object.assign({ mx: 0, my: 0, ax: p.x, ay: p.y - 100, fire: false, w: G.myWeapon }, inp || {});
+          if (G.state !== 'play') break;
+          updatePlay(1 / 60, q); updateFx(1 / 60);
+        }
+      },
+      get MAP() { return MAP; },
       snapSize() { return JSON.stringify(buildSnap()).length; },
       killBoss() { if (G.boss) { G.boss.state = 'fight'; G.boss.hp = 0; onBossKilled(G.boss); } },
     },

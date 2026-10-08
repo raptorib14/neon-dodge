@@ -31,6 +31,8 @@
              autocapitalize="off" spellcheck="false" enterkeyhint="go" placeholder="Jugador">
       <p id="invite" class="invite hidden"></p>
       <div id="menu-main">
+        <div class="code-label">Elegí el mapa</div>
+        <div id="map-pick" class="maps"></div>
         <button id="btn-play" type="button" class="big">JUGAR SOLO</button>
         <div class="row">
           <button id="btn-host" type="button" class="mid">CREAR PARTIDA</button>
@@ -48,8 +50,11 @@
       <p id="menu-msg" class="msg hidden" role="alert"></p>
       <div class="help">
         <p class="touch-only"><b>iPad:</b> dedo izquierdo = mover (joystick) · dedo derecho = disparar
-          (mantené para ráfaga, arrastrá para apuntar; si no arrastrás, apunta solo al enemigo más cercano)</p>
-        <p class="mouse-only"><b>Compu:</b> WASD / flechas = mover · clic (izq. o der.) = disparar a la mira</p>
+          (mantené para ráfaga, arrastrá para apuntar; si no arrastrás, apunta solo al enemigo más cercano) ·
+          botón ARMA (arriba del de disparo) = cambiar de arma</p>
+        <p class="mouse-only"><b>Compu:</b> WASD / flechas = mover · clic (izq. o der.) = disparar a la mira ·
+          1 / 2 / 3, rueda del mouse o Q = cambiar de arma</p>
+        <p><b>Armas:</b> 1 Pistola · 2 Ametralladora · 3 RPG (explota en área). <b>Vidas:</b> tenés 5 ♥.</p>
         <p>P / ENTER / ESPACIO = pausa · R = reiniciar · ESC = menú</p>
         <p class="cyan"><b>Con amigos (2 a 4):</b> uno toca CREAR PARTIDA y les pasa el código o el link; los demás tocan
           UNIRSE. Sirve desde cualquier red, en compu, celu o iPad. En multijugador solo el host puede pausar.</p>
@@ -58,6 +63,7 @@
         <p class="pink">Jefes: WARDEN (80 pts) · SEEKER (220) · TITAN (400). Ganás al vencer al TITAN.</p>
         <p class="dim">Powerups: verde +vida · celeste imán · naranja disparo rápido · amarillo +10</p>
         <p class="dim portrait-only">Tip: poné el iPad horizontal para que el juego se vea más grande.</p>
+        <p id="menu-tip" class="cyan"></p>
       </div>
     </div>
   </div>
@@ -76,13 +82,15 @@
       </div>
       <div id="lobby-count" class="count">Jugadores: 1/4</div>
       <ul id="lobby-players"></ul>
+      <p id="lobby-map-name" class="status"></p>
+      <div id="lobby-map" class="maps hidden"></div>
       <p id="lobby-status" class="status"></p>
       <p id="lobby-ipad-tip" class="yellow status hidden">Ojo: estás creando la partida desde un iPad. Mientras jueguen,
         no cambies de app ni bloquees la pantalla, porque se corta para todos. Conviene que la cree alguien en compu.</p>
       <button id="btn-start" type="button" class="big">EMPEZAR</button>
       <button id="btn-lobby-leave" type="button">Salir</button>
-      <p class="dim small-note">Cooperativo: puntaje compartido. Si caés, volvés a los 12 s (o cuando cae un jefe).
-        Pierden si caen todos. En multijugador solo el host puede pausar.<br>
+      <p class="dim small-note">Cooperativo: puntaje compartido. Cada uno tiene 5 vidas; si te quedás sin vidas quedás
+        fuera y volvés con 1 vida a los 12 s (o cuando cae un jefe). Pierden si quedan todos fuera. En multijugador solo el host puede pausar.<br>
         ¿No conecta? Que cree la partida alguien en compu y, si están en la red del cole, prueben con datos del celular.</p>
     </div>
   </div>
