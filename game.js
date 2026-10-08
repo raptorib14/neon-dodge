@@ -845,12 +845,14 @@
         else { this.fanShot(g, tx, ty, 4, 0.16, 300); this.aimCd = 0.8; }
         g.particles.spray(this.x + this.lx * this.r, this.y + this.ly * this.r, this.lx, this.ly, YELLOW, 6, 0.4, 200);
       }
-      this.summonCd -= dt; // hunters: v3 tope 6 -> v4 tope 4
+      // hunters: cuentan como enemigos comunes (spec §8, 13:56): tope 6 -> 4, 2 por invocación, intervalo / 0,6
+      // (fase 1 6,5 s -> ~10,83 s; fase 2 5 s -> ~8,33 s); la primera sigue a los 4 s; respeta MAX_ENEMIES
+      this.summonCd -= dt;
       if (this.summonCd <= 0) {
-        this.summonCd = p2 ? 5.0 : 6.5;
+        this.summonCd = (p2 ? 5.0 : 6.5) / ENEMY_COUNT_MULT;
         let hunters = g.enemies.filter((e) => e.kind === 'hunter').length;
         for (const side of [-1, 1]) {
-          if (hunters >= 4) break;
+          if (hunters >= 4 || g.enemies.length >= MAX_ENEMIES) break;
           let x = this.x + side * 50, y = this.y + 20, ok = !forbidden(x, y, 18);
           for (let i = 0; i < 10 && !ok; i++) { x = this.x + rand(-90, 90); y = this.y + rand(-40, 90); ok = !forbidden(x, y, 18); }
           if (!ok) continue;
@@ -1072,12 +1074,26 @@
     }
   }
   // busca un punto libre (fuera de pilares y zonas prohibidas): hasta 10 intentos, nunca un bucle infinito
+  // punto libre para un power-up: dentro de la arena y fuera de obstáculos, zonas prohibidas y portales.
+  // Prueba el punto, después 24 al azar alrededor con dispersión creciente (o por toda la arena si spread = 0) y, si
+  // igual no hay lugar, lo empuja afuera buscando en anillos alrededor del punto. Nunca devuelve un punto mal ubicado.
   function freePoint(x, y, pad, spread) {
-    if (x >= pad && x <= W - pad && y >= pad && y <= H - pad && !forbidden(x, y, pad)) return [x, y];
-    for (let i = 0; i < 10; i++) {
-      const nx = spread ? clamp(x + rand(-spread, spread), pad, W - pad) : rand(pad + 40, W - pad - 40);
-      const ny = spread ? clamp(y + rand(-spread, spread), pad, H - pad) : rand(pad + 60, H - pad - 40);
-      if (!forbidden(nx, ny, pad)) return [nx, ny];
+    const ok = (px, py) => px >= pad && px <= W - pad && py >= pad && py <= H - pad && !forbidden(px, py, pad) && !nearPortal(px, py, pad);
+    const has = x >= 0 && y >= 0;
+    if (has && ok(x, y)) return [x, y];
+    for (let i = 0; i < 24; i++) {
+      const sp = spread * (1 + i / 6); // 70 -> ~350 px
+      const nx = has && spread ? clamp(x + rand(-sp, sp), pad, W - pad) : rand(pad + 40, W - pad - 40);
+      const ny = has && spread ? clamp(y + rand(-sp, sp), pad, H - pad) : rand(pad + 60, H - pad - 40);
+      if (ok(nx, ny)) return [nx, ny];
+    }
+    const cx = has ? clamp(x, pad, W - pad) : W / 2, cy = has ? clamp(y, pad, H - pad) : H / 2;
+    for (let r = 10; r <= 1200; r += 10) { // empujarlo afuera: el lugar libre más cercano
+      const n = Math.max(8, Math.round(r / 6)), a0 = rand(0, TAU);
+      for (let k = 0; k < n; k++) {
+        const a = a0 + (k / n) * TAU, nx = cx + Math.cos(a) * r, ny = cy + Math.sin(a) * r;
+        if (ok(nx, ny)) return [nx, ny];
+      }
     }
     return null;
   }
@@ -1388,9 +1404,11 @@
   function rpgExplode(b, x, y, direct) {
     G.stats.explosions++;
     G.stats.lastEx = [r1(x), r1(y)];
+    const rec = NET.rec; NET.rec = false; // las partículas van solo en el evento 'ex' (si no, el cliente la ve doble)
     G.particles.burst(x, y, ORANGE, 34, 320, 7, 0.7);
     G.particles.burst(x, y, YELLOW, 14, 200, 5, 0.5);
     G.particles.ring(x, y, ORANGE, RPG_RADIUS, 0.45, 5);
+    NET.rec = rec;
     G.addShake(5);
     if (NET.rec) NET.ev.push(['ex', r0(x), r0(y)]);
     for (const e of G.enemies) {
@@ -1489,7 +1507,8 @@
       for (let s = 0; s < steps && b.life > 0; s++) stepBullet(b, sdt);
     }
     G.bullets = G.bullets.filter((b) => b.life > 0);
-    for (const b of G.bullets) if (b.w === 2 && Math.random() < 0.8) G.particles.trail(b.x - b.vx * 0.03, b.y - b.vy * 0.03, ORANGE, 4, 0.35);
+    // estela del cohete: local (el cliente la dibuja solo con su copia del cohete; si se mandara, saldría doble)
+    for (const b of G.bullets) if (b.w === 2 && Math.random() < 0.8) G.particles.trail(b.x - b.vx * 0.03, b.y - b.vy * 0.03, ORANGE, 4, 0.35, true);
     G.mines = G.mines.filter((m) => !m.dead);
     G.missiles = G.missiles.filter((m) => !m.dead);
 
@@ -1737,7 +1756,7 @@
         killMissile(m, false);
         break;
       }
-      if (!m.dead && G.state === 'play' && Math.random() < 0.6) G.particles.trail(m.x - Math.cos(m.ang) * 10, m.y - Math.sin(m.ang) * 10, ORANGE, 3, 0.3);
+      if (!m.dead && G.state === 'play' && Math.random() < 0.6) G.particles.trail(m.x - Math.cos(m.ang) * 10, m.y - Math.sin(m.ang) * 10, ORANGE, 3, 0.3, true); // local: el cliente la dibuja solo
     }
     G.missiles = G.missiles.filter((m) => !m.dead);
   }
@@ -1863,11 +1882,14 @@
 
   function hostOnData(conn, d) {
     conn.lastMsg = performance.now();
-    if (Array.isArray(d)) { // controles: ['i', seq, mx*100, my*100, ax, ay, disparando]
+    if (Array.isArray(d)) { // controles: ['i', seq, mx*100, my*100, ax, ay, disparando, arma, ronda]
       const p = conn.pid !== undefined && G.players.find((q) => q.id === conn.pid);
       if (!p || d[0] !== 'i') return;
+      // arma: solo si el control es de esta ronda (al reiniciar pueden llegar controles atrasados con el arma vieja).
+      // Sin [8] (cliente v4 anterior) se aplica como antes; -1 = el cliente todavía no sabe la ronda.
+      const sameRound = d.length < 9 || d[8] === G.round;
       p.inp = { mx: (+d[2] || 0) / 100, my: (+d[3] || 0) / 100, ax: +d[4] || 0, ay: +d[5] || 0, fire: !!d[6],
-        w: typeof d[7] === 'number' && d[7] >= 0 ? clamp(d[7] | 0, 0, WEAPONS.length - 1) : undefined };
+        w: sameRound && typeof d[7] === 'number' && d[7] >= 0 ? clamp(d[7] | 0, 0, WEAPONS.length - 1) : undefined };
       p.seq = +d[1] || 0;
       p.lastInput = performance.now();
       p.away = false;
@@ -1916,7 +1938,7 @@
       safeSend(conn, { t: 'w', id: r.id, code: NET.code, mp: MAP.id });
       hostRoster();
       if (inGame()) {
-        safeSend(conn, { t: 'go', mp: MAP.id });
+        safeSend(conn, { t: 'go', mp: MAP.id, rd: G.round });
         conn.extra = fullSyncEvents();
       }
       if (G.state === 'lobby') renderLobby();
@@ -1966,7 +1988,7 @@
     NET.ghosts.clear();
     NET.ev = []; NET.sendAcc = 1;
     setState('play');
-    for (const r of NET.roster) if (r.conn) { r.conn.extra = null; safeSend(r.conn, { t: 'go', mp: MAP.id }); }
+    for (const r of NET.roster) if (r.conn) { r.conn.extra = null; safeSend(r.conn, { t: 'go', mp: MAP.id, rd: G.round }); }
     hostRoster();
   }
 
@@ -2154,7 +2176,7 @@
         if (d.mp && !inGame()) useMap(d.mp, false);
         if (G.state === 'lobby') renderLobby();
         break;
-      case 'go': if (d.mp) useMap(d.mp, false); clientStartRound(); break;
+      case 'go': if (d.mp) useMap(d.mp, false); C.round = d.rd; clientStartRound(); break;
       case 'full': clientFail('La partida está llena (ya hay 4 jugadores).'); break;
       case 'ver': clientFail(TXT.version); break;
       case 'end': clientLeave('El host cerró la partida.'); break;
@@ -2376,7 +2398,8 @@
     const seq = ++C.seq;
     C.hist.push({ s: seq, mx, my, dt });
     if (C.hist.length > 300) C.hist.shift();
-    safeSend(NET.conn, ['i', seq, r0(mx * 100), r0(my * 100), r0(inp.ax || 0), r0(inp.ay || 0), playing && inp.fire ? 1 : 0, C.weaponSync ? -1 : G.myWeapon]);
+    safeSend(NET.conn, ['i', seq, r0(mx * 100), r0(my * 100), r0(inp.ax || 0), r0(inp.ay || 0), playing && inp.fire ? 1 : 0, C.weaponSync ? -1 : G.myWeapon,
+      C.round === undefined ? -1 : C.round]); // [8] = ronda: el host ignora el arma de controles de otra ronda
     G.firing = playing && inp.fire;
     if (C.pred && playing && G.player && G.player.hp > 0) {
       const tmp = { x: C.pred.x, y: C.pred.y, r: 14, speed: 280 };
@@ -3153,7 +3176,7 @@
     debug: {
       damage(id) { const p = G.players.find((q) => q.id === id); if (p) { p.invuln = 0; damagePlayer(p); } },
       MAPS, WEAPONS, useMap, safeSpawn, forbidden, obstacleHit, rpgExplode, damagePlayer, switchWeapon, initRound, spawnWave,
-      stepMove, makePlayer, setState, pushOut, freePoint, AB, WARN, BOSS_TYPES,
+      stepMove, makePlayer, setState, pushOut, freePoint, spawnPowerup, nearPortal, AB, WARN, BOSS_TYPES,
       K: { RING_SLOTS, RING_GAP, RING_SPEED, MINE_MAX, MINE_ORBIT, MINE_R, MINE_HP, MISSILE_SPEED, MISSILE_HOMING, MISSILE_HP, MISSILE_R,
         LASER_SWEEP, LASER_TIME, LASER_HALF, WAVE_SPEED, WAVE_HALF, WAVE_GAPS, WAVE_GAP_W, RPG_RADIUS, RPG_SPLASH, START_LIVES,
         RESPAWN_SHORT, RESPAWN_INVULN, RESPAWN_TIME, ENEMY_COUNT_MULT, SPAWN_RATE_MULT, MAX_ENEMIES, GLOBAL_CD, PROTO, TELE_DIST, TELE_MIN },
