@@ -36,11 +36,14 @@
   // (para que alternar armas no dispare más rápido, checklist 1.8).
   const WEAPONS = [
     { key: 'pistola', cd: 0.12, cdRapid: 0.065, dmg: 1, speed: 640, r: 5, spread: 1.5, life: 1.1 },
-    { key: 'ametralladora', cd: 1 / 12, cdRapid: 1 / 18, dmg: 0.4, speed: 640, r: 3, spread: 6, life: 1.0 },
-    { key: 'rpg', cd: 1.2, cdRapid: 0.8, dmg: 6, speed: 360, r: 7, spread: 0, life: 3.0 },
+    // números finales (spec §8, 13:40): ametralladora 0,8 por bala (80% de la pistola); el disparo rápido solo
+    // acelera la pistola; RPG a 330 px/s
+    { key: 'ametralladora', cd: 1 / 12, cdRapid: 1 / 12, dmg: 0.8, speed: 640, r: 3, spread: 6, life: 1.0 },
+    { key: 'rpg', cd: 1.2, cdRapid: 1.2, dmg: 6, speed: 330, r: 7, spread: 0, life: 3.5 },
   ];
   const RPG_RADIUS = 90, RPG_SPLASH = 3; // explosión: 3 de daño a todo lo que esté a <= 90 px (al jefe: una vez)
-  const GLOBAL_CD = 1 / 12, GLOBAL_CD_RAPID = 1 / 18;
+  // tope global: 12 tiros/s cambiando de arma; con el disparo rápido, el de la pistola rápida (0,065 s)
+  const GLOBAL_CD = 1 / 12, GLOBAL_CD_RAPID = 0.065;
 
   // ---- Vidas (spec §3) ----
   const START_LIVES = 5, MAX_LIVES = 5, RESPAWN_SHORT = 2, RESPAWN_INVULN = 2;
@@ -547,11 +550,11 @@
   // Habilidad activa: this.ab = { k, t, a, b, c } (k = código, t = segundos de aviso que faltan).
   // ---------------------------------------------------------------------------
   const AB = { W_RING: 1, W_MINES: 2, S_TELE: 3, S_MISS: 4, T_LASER_WARN: 5, T_LASER: 6, T_SLAM: 7 };
-  const WARN = { 1: 0.8, 2: 0.8, 3: 0.9, 4: 0.7, 5: 0.8, 7: 0.8 }; // aviso en segundos (0,6–1 s)
+  const WARN = { 1: 0.8, 2: 0.8, 3: 0.8, 4: 0.8, 5: 0.8, 7: 0.8 }; // aviso de 0,8 s para todas (spec §8)
   // números de las habilidades (iguales en web y compu)
   const RING_SLOTS = 18, RING_GAP = 4, RING_SPEED = 150;              // anillo: 14 balas, hueco de 100°
   const MINE_MAX = 4, MINE_ORBIT = 110, MINE_SPIN = 1.4, MINE_R = 12, MINE_HP = 3, MINE_PTS = 3;
-  const TELE_DIST = 190, TELE_HOLD = 1.2;
+  const TELE_DIST = 190, TELE_MIN = 150, TELE_HOLD = 1.2; // a 190 px de un jugador y a >= 150 px de todos
   const MISSILE_SPEED = 150, MISSILE_TURN = 2.0, MISSILE_HOMING = 4, MISSILE_LIFE = 8, MISSILE_HP = 2, MISSILE_R = 9, MISSILE_PTS = 2;
   const LASER_SWEEP = 1.75, LASER_TIME = 1.6, LASER_HALF = 13;       // barre ~100° en 1,6 s; rayo de 26 px
   const WAVE_SPEED = 240, WAVE_HALF = 8, WAVE_GAPS = 3, WAVE_GAP_W = 40 * Math.PI / 180;
@@ -577,10 +580,12 @@
         return;
       }
       this.t += dt;
+      const prevAb = this.ab;
       this.fight(dt, g);
-      if (this.ab && this.ab.k !== AB.T_LASER) {
+      // el aviso que empieza en este cuadro no se descuenta todavía: dura exactamente WARN (0,8 s = 48 cuadros)
+      if (this.ab && this.ab === prevAb && this.ab.k !== AB.T_LASER) {
         this.ab.t -= dt;
-        if (this.ab.t <= 0) { const ab = this.ab; this.ab = null; logAbility(this.name + ':ya' + ab.k); this.execute(ab, g); }
+        if (this.ab.t <= 1e-9) { const ab = this.ab; this.ab = null; logAbility(this.name + ':ya' + ab.k); this.execute(ab, g); }
       }
     }
     startAb(k, banner, a = 0, b = 0, c = 0) {
@@ -802,7 +807,7 @@
         const a = rand(0, TAU), x = tg.x + Math.cos(a) * TELE_DIST, y = tg.y + Math.sin(a) * TELE_DIST;
         if (x < this.r + 20 || x > W - this.r - 20 || y < this.r + 20 || y > H - this.r - 20) continue;
         if (forbidden(x, y, this.r) || nearPortal(x, y, this.r + 20)) continue;
-        if (G.players.some((p) => p.hp > 0 && Math.hypot(p.x - x, p.y - y) < this.r + p.r + 90)) continue;
+        if (G.players.some((p) => p.hp > 0 && Math.hypot(p.x - x, p.y - y) < TELE_MIN - 1e-6)) continue;
         return [x, y];
       }
       return null;
@@ -1375,7 +1380,7 @@
     G.particles.spray(mx, my, dx, dy, wi === 2 ? ORANGE : WHITE, wi === 2 ? 8 : 3, 0.4, 180, 3, 0.15);
     if (wi === 2) shakeFor(p, 3);
     p.wcd[wi] = p.rapid > 0 ? wp.cdRapid : wp.cd;
-    p.gcd = p.rapid > 0 ? GLOBAL_CD_RAPID : GLOBAL_CD; // alternar armas no dispara más rápido (1.8)
+    p.gcd = Math.min(p.wcd[wi], p.rapid > 0 ? GLOBAL_CD_RAPID : GLOBAL_CD); // alternar armas no dispara más rápido (1.8)
   }
 
   // explosión del RPG: RPG_SPLASH a todo lo que esté a <= RPG_RADIUS del punto (centro), y el impacto directo
@@ -1592,7 +1597,10 @@
       if (!taker) continue;
       G.powerups.splice(G.powerups.indexOf(u), 1);
       G.particles.burst(u.x, u.y, POWERUP_COLORS[u.kind], 16, 150);
-      if (u.kind === 'heal') { taker.lives = Math.min(MAX_LIVES, taker.lives + 1); G.popup(u.x, u.y, '+1 VIDA', LIME); }
+      if (u.kind === 'heal') { // +1 vida (tope 5); si ya tenés 5, puntos
+        if (taker.lives < MAX_LIVES) { taker.lives++; G.popup(u.x, u.y, '+1 VIDA', LIME); }
+        else { G.score += SCORE_POWERUP; G.popup(u.x, u.y, `+${SCORE_POWERUP}`, YELLOW); }
+      }
       else if (u.kind === 'magnet') { taker.magnet = 6; G.popup(u.x, u.y, 'IMÁN', CYAN); }
       else if (u.kind === 'rapid') { taker.rapid = 6; G.popup(u.x, u.y, 'DISPARO RÁPIDO', ORANGE); }
       else { G.score += SCORE_POWERUP; G.popup(u.x, u.y, `+${SCORE_POWERUP}`, YELLOW); }
@@ -3148,7 +3156,7 @@
       stepMove, makePlayer, setState, pushOut, freePoint, AB, WARN, BOSS_TYPES,
       K: { RING_SLOTS, RING_GAP, RING_SPEED, MINE_MAX, MINE_ORBIT, MINE_R, MINE_HP, MISSILE_SPEED, MISSILE_HOMING, MISSILE_HP, MISSILE_R,
         LASER_SWEEP, LASER_TIME, LASER_HALF, WAVE_SPEED, WAVE_HALF, WAVE_GAPS, WAVE_GAP_W, RPG_RADIUS, RPG_SPLASH, START_LIVES,
-        RESPAWN_SHORT, RESPAWN_INVULN, RESPAWN_TIME, ENEMY_COUNT_MULT, SPAWN_RATE_MULT, MAX_ENEMIES, GLOBAL_CD, PROTO, TELE_DIST },
+        RESPAWN_SHORT, RESPAWN_INVULN, RESPAWN_TIME, ENEMY_COUNT_MULT, SPAWN_RATE_MULT, MAX_ENEMIES, GLOBAL_CD, PROTO, TELE_DIST, TELE_MIN },
       // simula n cuadros de 1/60 s con controles fijos (para pruebas deterministas, con G.frozen = true)
       step(n, inp) {
         const p = G.player;
