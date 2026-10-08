@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="Neon Dodge">
+  <meta name="format-detection" content="telephone=no">
+  <meta name="theme-color" content="#080a18">
+  <title>Neon Dodge</title>
+  <link rel="icon" type="image/png" href="icon.png">
+  <link rel="apple-touch-icon" href="icon.png">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <canvas id="game" aria-label="Neon Dodge"></canvas>
+
+  <div id="hud-buttons" class="hidden">
+    <button id="btn-pause" type="button" title="Pausa (P)" aria-label="Pausa">❚❚</button>
+    <button id="btn-restart" type="button" title="Reiniciar (R)" aria-label="Reiniciar">↻</button>
+  </div>
+
+  <div id="menu" class="overlay">
+    <div class="panel">
+      <h1>NEON DODGE</h1>
+      <p class="sub">Sobreviví, disparale a todo y vencé a los 3 jefes</p>
+      <label for="name">Tu nombre</label>
+      <input id="name" type="text" maxlength="14" autocomplete="off" autocorrect="off"
+             autocapitalize="off" spellcheck="false" enterkeyhint="go" placeholder="Jugador">
+      <button id="btn-play" type="button" class="big">JUGAR</button>
+      <div class="best">Récord: <span id="best">0</span></div>
+      <div class="help">
+        <p class="touch-only"><b>iPad:</b> dedo izquierdo = mover (joystick) · dedo derecho = disparar
+          (mantené para ráfaga, arrastrá para apuntar; si no arrastrás, apunta solo al enemigo más cercano)</p>
+        <p class="mouse-only"><b>Compu:</b> WASD / flechas = mover · clic (izq. o der.) = disparar a la mira</p>
+        <p>P / ENTER / ESPACIO = pausa · R = reiniciar · ESC = menú</p>
+        <p class="pink">Jefes: WARDEN (80 pts) · SEEKER (220) · TITAN (400). Ganás al vencer al TITAN.</p>
+        <p class="dim">Powerups: verde +vida · celeste imán · naranja disparo rápido · amarillo +10</p>
+        <p class="dim portrait-only">Tip: poné el iPad horizontal para que el juego se vea más grande.</p>
+      </div>
+    </div>
+  </div>
+
+  <div id="pause" class="overlay hidden">
+    <div class="panel small">
+      <h2>PAUSA</h2>
+      <button id="btn-resume" type="button" class="big">SEGUIR</button>
+      <button id="btn-pause-restart" type="button">Reiniciar</button>
+      <button id="btn-pause-menu" type="button">Menú</button>
+    </div>
+  </div>
+
+  <div id="end" class="overlay hidden">
+    <div class="panel small">
+      <h2 id="end-title">GAME OVER</h2>
+      <p id="end-stats"></p>
+      <p id="end-record" class="yellow"></p>
+      <button id="btn-retry" type="button" class="big">REINTENTAR</button>
+      <button id="btn-end-menu" type="button">Menú</button>
+    </div>
+  </div>
+
+  <script src="game.js"></script>
+</body>
+</html>
