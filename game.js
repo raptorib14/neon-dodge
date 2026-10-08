@@ -27,8 +27,10 @@
   const SCORE_POWERUP = 10;
   const FIRE_COOLDOWN = 0.12, FIRE_COOLDOWN_RAPID = 0.065, BULLET_SPEED = 640;
   const WAVE_INTERVAL = 4.5;
-  // v4 "menos pelotitas": -40% enemigos por oleada y -40% de tasa de aparición (intervalo / 0,6)
-  const ENEMY_COUNT_MULT = 0.6, SPAWN_RATE_MULT = 0.6;
+  // v4 "menos pelotitas": -40% de tasa de aparición (intervalo / 0,6). v4.1 (Nico: "que sean menos enemigos"):
+  // enemigos por oleada × 0,3 (la mitad que la v4, mínimo 1); el intervalo entre oleadas no cambia
+  const ENEMY_COUNT_MULT = 0.3, SPAWN_RATE_MULT = 0.6;
+  const HUNTERS_PER_SUMMON = 1, HUNTERS_MAX = 2; // v4.1: hunters del SEEKER a la mitad (v4: 2 por invocación, tope 4)
 
   // ---- Armas (spec §1) ----
   // cd = segundos entre tiros; cdRapid = con el powerup naranja. Cada arma tiene su propia recarga que sigue
@@ -847,14 +849,16 @@
         else { this.fanShot(g, tx, ty, 4, 0.16, 300); this.aimCd = 0.8; }
         g.particles.spray(this.x + this.lx * this.r, this.y + this.ly * this.r, this.lx, this.ly, YELLOW, 6, 0.4, 200);
       }
-      // hunters: cuentan como enemigos comunes (spec §8, 13:56): tope 6 -> 4, 2 por invocación, intervalo / 0,6
-      // (fase 1 6,5 s -> ~10,83 s; fase 2 5 s -> ~8,33 s); la primera sigue a los 4 s; respeta MAX_ENEMIES
+      // hunters: intervalo de la v4 (6,5 s / 0,6 ≈ 10,83 s en fase 1, 5 s / 0,6 ≈ 8,33 s en fase 2; fijo, no depende de
+      // ENEMY_COUNT_MULT); v4.1: 1 por invocación (lado alternado) y tope 2; la primera a los 4 s; respeta MAX_ENEMIES
       this.summonCd -= dt;
       if (this.summonCd <= 0) {
-        this.summonCd = (p2 ? 5.0 : 6.5) / ENEMY_COUNT_MULT;
+        this.summonCd = (p2 ? 5.0 : 6.5) / SPAWN_RATE_MULT;
         let hunters = g.enemies.filter((e) => e.kind === 'hunter').length;
-        for (const side of [-1, 1]) {
-          if (hunters >= 4 || g.enemies.length >= MAX_ENEMIES) break;
+        this.summonSide = -(this.summonSide || 1);
+        for (let k = 0; k < HUNTERS_PER_SUMMON; k++) {
+          const side = k % 2 ? -this.summonSide : this.summonSide;
+          if (hunters >= HUNTERS_MAX || g.enemies.length >= MAX_ENEMIES) break;
           let x = this.x + side * 50, y = this.y + 20, ok = !forbidden(x, y, 18);
           for (let i = 0; i < 10 && !ok; i++) { x = this.x + rand(-90, 90); y = this.y + rand(-40, 90); ok = !forbidden(x, y, 18); }
           if (!ok) continue;
@@ -3211,7 +3215,7 @@
       stepMove, makePlayer, setState, pushOut, freePoint, spawnPowerup, nearPortal, waveCount, rescaleBoss, hostDrop, AB, WARN, BOSS_TYPES,
       K: { RING_SLOTS, RING_GAP, RING_SPEED, MINE_MAX, MINE_ORBIT, MINE_R, MINE_HP, MISSILE_SPEED, MISSILE_HOMING, MISSILE_HP, MISSILE_R,
         LASER_SWEEP, LASER_TIME, LASER_HALF, WAVE_SPEED, WAVE_HALF, WAVE_GAPS, WAVE_GAP_W, RPG_RADIUS, RPG_SPLASH, START_LIVES,
-        RESPAWN_SHORT, RESPAWN_INVULN, RESPAWN_TIME, ENEMY_COUNT_MULT, SPAWN_RATE_MULT, MAX_ENEMIES, GLOBAL_CD, PROTO, TELE_DIST, TELE_MIN },
+        RESPAWN_SHORT, RESPAWN_INVULN, RESPAWN_TIME, ENEMY_COUNT_MULT, SPAWN_RATE_MULT, HUNTERS_PER_SUMMON, HUNTERS_MAX, MAX_ENEMIES, GLOBAL_CD, PROTO, TELE_DIST, TELE_MIN },
       // simula n cuadros de 1/60 s (o dt: número o función del cuadro) con controles fijos (pruebas deterministas, G.frozen = true)
       step(n, inp, dt) {
         const p = G.player;
