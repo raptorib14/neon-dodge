@@ -38,7 +38,7 @@
     { key: 'pistola', cd: 0.12, cdRapid: 0.065, dmg: 1, speed: 640, r: 5, spread: 1.5, life: 1.1 },
     // números finales (spec §8, 13:40): ametralladora 0,8 por bala (80% de la pistola); el disparo rápido solo
     // acelera la pistola; RPG a 330 px/s
-    { key: 'ametralladora', cd: 1 / 12, cdRapid: 1 / 12, dmg: 0.8, speed: 640, r: 3, spread: 6, life: 1.0 },
+    { key: 'ametralladora', cd: 1 / 12, cdRapid: 1 / 12, dmg: 0.8, speed: 640, r: 3, spread: 6, life: 1.1 }, // 1,1 s como en la compu
     { key: 'rpg', cd: 1.2, cdRapid: 1.2, dmg: 6, speed: 330, r: 7, spread: 0, life: 3.5 },
   ];
   const RPG_RADIUS = 90, RPG_SPLASH = 3; // explosión: 3 de daño a todo lo que esté a <= 90 px (al jefe: una vez)
@@ -564,6 +564,7 @@
       Object.assign(this, def);
       this.x = W / 2; this.y = -90;
       this.hp = this.maxHp;
+      this.baseHp = this.maxHp; // vida para 1 jugador (para reescalar si alguien entra o se va)
       this.state = 'enter';
       this.t = 0; this.flash = 0; this.angle = 0; this.index = 0;
       this.phase2Announced = false;
@@ -827,17 +828,18 @@
         const k = Math.min(1, 6 * dt);
         this.lx += (nx - this.lx) * k; this.ly += (ny - this.ly) * k;
       }
-      if (this.ab) return;
+      // los temporizadores siguen corriendo durante los avisos (como en la compu); solo no empieza otra habilidad
+      // mientras hay una en curso. El abanico, los hunters y el anillo siguen igual durante el aviso.
       this.teleCd -= dt; this.missCd -= dt;
-      if (this.teleCd <= 0) {
-        const d = this.teleDest();
-        if (d) this.startAb(AB.S_TELE, TXT.seekerTeleport, d[0], d[1]);
-        this.teleCd = p2 ? 7 : 9;
-        if (d) return;
-      } else if (this.missCd <= 0) {
-        this.startAb(AB.S_MISS, TXT.seekerMisiles, p2 ? 3 : 2);
-        this.missCd = p2 ? 7.5 : 10;
-        return;
+      if (!this.ab) {
+        if (this.teleCd <= 0) {
+          const d = this.teleDest();
+          if (d) this.startAb(AB.S_TELE, TXT.seekerTeleport, d[0], d[1]);
+          this.teleCd = p2 ? 7 : 9;
+        } else if (this.missCd <= 0) {
+          this.startAb(AB.S_MISS, TXT.seekerMisiles, p2 ? 3 : 2);
+          this.missCd = p2 ? 7.5 : 10;
+        }
       }
       this.aimCd -= dt; // abanico: v3 3/5 balas -> v4 2/4
       if (this.aimCd <= 0) {
@@ -1236,16 +1238,36 @@
     G.powerups.push({ id: ++G.nid, x: pt[0], y: pt[1], kind, r: 10, life: 9, bob: rand(0, TAU) });
   }
 
-  // v3: n = 2 + ola (menor: (2 + ola) / 3) -> v4: × 0,6 (-40%); el intervalo entre oleadas / 0,6 (-40% de tasa)
+  // round() de Python (mitades al par), para dar exactamente lo mismo que la compu
+  function pyRound(x) {
+    const f = Math.floor(x), d = x - f;
+    return d > 0.5 ? f + 1 : d < 0.5 ? f : (f % 2 === 0 ? f : f + 1);
+  }
+  // enemigos por oleada, igual que spawn_wave de la compu: base × 0,6 y el +35% por jugador extra sobre esa base,
+  // redondeando una sola vez (v3: 2 + ola; menor: (2 + ola) / 3)
+  function waveCount(w, minor, players) {
+    const base = (minor ? (2 + w) / 3 * ENEMY_COUNT_MULT : (2 + w) * ENEMY_COUNT_MULT);
+    return Math.max(1, pyRound(base * (1 + 0.35 * (Math.max(1, players) - 1))));
+  }
+  // el intervalo entre oleadas / 0,6 (-40% de tasa)
   function spawnWave(minor) {
     if (!minor) G.wave++;
     const w = Math.max(1, G.wave);
-    let n = minor ? Math.max(1, Math.floor((2 + w) / 3)) : 2 + w;
-    n = Math.max(1, Math.round(n * ENEMY_COUNT_MULT));
-    n = Math.floor(n * (1 + 0.35 * (Math.max(1, G.players.length) - 1))); // más jugadores, más enemigos (+35%)
+    let n = waveCount(w, minor, G.players.length);
     n = Math.min(n, MAX_ENEMIES - G.enemies.length);
     for (let i = 0; i < n; i++) G.enemies.push(G.makeEnemy(w));
     if (!minor && Math.random() < 0.4) spawnPowerup();
+  }
+
+  // reaplica la escala de vida por jugadores (+60% c/u) conservando el porcentaje de vida (rescale_boss de la compu)
+  function rescaleBoss() {
+    const b = G.boss;
+    if (!b) return;
+    const newMax = Math.floor(b.baseHp * (1 + 0.6 * (Math.max(1, G.players.length) - 1)));
+    if (newMax === b.maxHp) return;
+    const frac = b.hp / Math.max(1, b.maxHp);
+    b.maxHp = newMax;
+    b.hp = Math.max(1, frac * newMax);
   }
 
   function startBoss(idx) {
@@ -1395,8 +1417,12 @@
     if (wi === 0 && p.rapid > 0) addBullet(p, mx - dy * 7, my + dx * 7, a + 4 * deg, 0); // pistola: disparo doble con el powerup
     G.particles.spray(mx, my, dx, dy, wi === 2 ? ORANGE : WHITE, wi === 2 ? 8 : 3, 0.4, 180, 3, 0.15);
     if (wi === 2) shakeFor(p, 3);
-    p.wcd[wi] = p.rapid > 0 ? wp.cdRapid : wp.cd;
-    p.gcd = Math.min(p.wcd[wi], p.rapid > 0 ? GLOBAL_CD_RAPID : GLOBAL_CD); // alternar armas no dispara más rápido (1.8)
+    // ametralladora y RPG arrastran el sobrante del cuadro (12/s y 1,2 s exactos aunque los cuadros no duren
+    // justo 1/60 s); la pistola queda como en la v3. Tope global (1.8): 12/s, o 0,065 s con el disparo rápido.
+    const cdNow = p.rapid > 0 ? wp.cdRapid : wp.cd, gate = p.rapid > 0 ? GLOBAL_CD_RAPID : GLOBAL_CD;
+    const carry = wi !== 0 ? Math.min(0, p.wcd[wi]) : 0;
+    p.wcd[wi] = cdNow + carry;
+    p.gcd = Math.min(cdNow, gate) + Math.min(0, p.gcd);
   }
 
   // explosión del RPG: RPG_SPLASH a todo lo que esté a <= RPG_RADIUS del punto (centro), y el impacto directo
@@ -1464,8 +1490,9 @@
     G.simTime += dt;
     // jugadores
     for (const p of G.players) {
-      for (let i = 0; i < 3; i++) p.wcd[i] = Math.max(0, p.wcd[i] - dt); // cada arma recarga aunque no la tengas
-      p.gcd = Math.max(0, p.gcd - dt);
+      // cada arma recarga aunque no la tengas; baja de 0 como mucho un cuadro (ese sobrante se arrastra al disparar)
+      for (let i = 0; i < 3; i++) p.wcd[i] = p.wcd[i] > 0 ? p.wcd[i] - dt : 0;
+      p.gcd = p.gcd > 0 ? p.gcd - dt : 0;
       if (p.hp <= 0) { p.firing = false; continue; }
       const inp = p === G.player ? localInp : remoteInput(p);
       if (inp.w !== undefined && inp.w !== p.weapon && inp.w >= 0 && inp.w < WEAPONS.length) {
@@ -1499,6 +1526,8 @@
       p.respawn -= dt;
       if (p.respawn <= 0) revivePlayer(p);
     }
+    // todos fuera (por ejemplo, el único vivo se fue mientras el host estaba en pausa): game over (check_game_over)
+    if (G.players.length && G.players.every((q) => q.out)) { gameOver(); return; }
 
     // proyectiles de los jugadores (con sub-pasos para que no atraviesen nada si el frame es largo)
     for (const b of G.bullets) {
@@ -1925,6 +1954,7 @@
           if (p.hp > 0) p.invuln = Math.max(p.invuln, 2);
           G.players.push(p);
           G.players.sort((a, b) => a.id - b.id);
+          rescaleBoss();
         }
       }
       conn.pid = r.id;
@@ -1934,6 +1964,7 @@
         p.invuln = 2;
         G.players.push(p);
         G.players.sort((a, b) => a.id - b.id);
+        rescaleBoss();
       }
       safeSend(conn, { t: 'w', id: r.id, code: NET.code, mp: MAP.id });
       hostRoster();
@@ -1966,6 +1997,7 @@
     if (p && inGame()) {
       if (p.hp > 0) G.particles.ring(p.x, p.y, p.color, 80, 0.6, 3);
       G.players = G.players.filter((q) => q !== p);
+      rescaleBoss();
       if (G.state === 'play' && G.players.length && G.players.every((q) => q.out)) gameOver(); // 6.14
     }
     toast(`${r.name} se fue de la partida`);
@@ -3176,17 +3208,18 @@
     debug: {
       damage(id) { const p = G.players.find((q) => q.id === id); if (p) { p.invuln = 0; damagePlayer(p); } },
       MAPS, WEAPONS, useMap, safeSpawn, forbidden, obstacleHit, rpgExplode, damagePlayer, switchWeapon, initRound, spawnWave,
-      stepMove, makePlayer, setState, pushOut, freePoint, spawnPowerup, nearPortal, AB, WARN, BOSS_TYPES,
+      stepMove, makePlayer, setState, pushOut, freePoint, spawnPowerup, nearPortal, waveCount, rescaleBoss, hostDrop, AB, WARN, BOSS_TYPES,
       K: { RING_SLOTS, RING_GAP, RING_SPEED, MINE_MAX, MINE_ORBIT, MINE_R, MINE_HP, MISSILE_SPEED, MISSILE_HOMING, MISSILE_HP, MISSILE_R,
         LASER_SWEEP, LASER_TIME, LASER_HALF, WAVE_SPEED, WAVE_HALF, WAVE_GAPS, WAVE_GAP_W, RPG_RADIUS, RPG_SPLASH, START_LIVES,
         RESPAWN_SHORT, RESPAWN_INVULN, RESPAWN_TIME, ENEMY_COUNT_MULT, SPAWN_RATE_MULT, MAX_ENEMIES, GLOBAL_CD, PROTO, TELE_DIST, TELE_MIN },
-      // simula n cuadros de 1/60 s con controles fijos (para pruebas deterministas, con G.frozen = true)
-      step(n, inp) {
+      // simula n cuadros de 1/60 s (o dt: número o función del cuadro) con controles fijos (pruebas deterministas, G.frozen = true)
+      step(n, inp, dt) {
         const p = G.player;
         for (let i = 0; i < n; i++) {
           const q = Object.assign({ mx: 0, my: 0, ax: p.x, ay: p.y - 100, fire: false, w: G.myWeapon }, inp || {});
           if (G.state !== 'play') break;
-          updatePlay(1 / 60, q); updateFx(1 / 60);
+          const d = typeof dt === 'function' ? dt(i) : (dt || 1 / 60);
+          updatePlay(d, q); updateFx(d);
         }
       },
       get MAP() { return MAP; },
