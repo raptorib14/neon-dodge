@@ -25,17 +25,36 @@
   <div id="menu" class="overlay">
     <div class="panel">
       <h1>NEON DODGE</h1>
-      <p class="sub">Sobreviví, disparale a todo y vencé a los 3 jefes</p>
+      <p class="sub">Sobreviví, disparale a todo y vencé a los 3 jefes · solo o con amigos</p>
       <label for="name">Tu nombre</label>
       <input id="name" type="text" maxlength="14" autocomplete="off" autocorrect="off"
              autocapitalize="off" spellcheck="false" enterkeyhint="go" placeholder="Jugador">
-      <button id="btn-play" type="button" class="big">JUGAR</button>
-      <div class="best">Récord: <span id="best">0</span></div>
+      <p id="invite" class="invite hidden"></p>
+      <div id="menu-main">
+        <button id="btn-play" type="button" class="big">JUGAR SOLO</button>
+        <div class="row">
+          <button id="btn-host" type="button" class="mid">CREAR PARTIDA</button>
+          <button id="btn-join" type="button" class="mid">UNIRSE CON CÓDIGO</button>
+        </div>
+        <div class="best">Récord: <span id="best">0</span></div>
+      </div>
+      <div id="menu-join" class="hidden">
+        <label for="code" class="code-label">Código de la partida</label>
+        <input id="code" type="text" maxlength="5" autocomplete="off" autocorrect="off" autocapitalize="characters"
+               spellcheck="false" enterkeyhint="go" placeholder="ABCDE">
+        <button id="btn-join-go" type="button" class="big">ENTRAR</button>
+        <button id="btn-join-back" type="button">Volver</button>
+      </div>
+      <p id="menu-msg" class="msg hidden" role="alert"></p>
       <div class="help">
         <p class="touch-only"><b>iPad:</b> dedo izquierdo = mover (joystick) · dedo derecho = disparar
           (mantené para ráfaga, arrastrá para apuntar; si no arrastrás, apunta solo al enemigo más cercano)</p>
         <p class="mouse-only"><b>Compu:</b> WASD / flechas = mover · clic (izq. o der.) = disparar a la mira</p>
         <p>P / ENTER / ESPACIO = pausa · R = reiniciar · ESC = menú</p>
+        <p class="cyan"><b>Con amigos (2 a 4):</b> uno toca CREAR PARTIDA y les pasa el código o el link; los demás tocan
+          UNIRSE. Sirve desde cualquier red, en compu, celu o iPad. En multijugador solo el host puede pausar.</p>
+        <p class="yellow"><b>Tip:</b> conviene que cree la partida alguien en compu (no el iPad). Si en la red del cole
+          no conecta, probá con los datos del celular.</p>
         <p class="pink">Jefes: WARDEN (80 pts) · SEEKER (220) · TITAN (400). Ganás al vencer al TITAN.</p>
         <p class="dim">Powerups: verde +vida · celeste imán · naranja disparo rápido · amarillo +10</p>
         <p class="dim portrait-only">Tip: poné el iPad horizontal para que el juego se vea más grande.</p>
@@ -43,12 +62,55 @@
     </div>
   </div>
 
+  <div id="lobby" class="overlay hidden">
+    <div class="panel">
+      <h2>SALA DE ESPERA</h2>
+      <div class="code-label">Código de la partida</div>
+      <div id="lobby-code" class="code">-----</div>
+      <div class="share">
+        <input id="lobby-link" type="text" readonly aria-label="Link para unirse">
+        <div>
+          <button id="btn-copy" type="button">Copiar link</button>
+          <button id="btn-share" type="button" class="hidden">Compartir</button>
+        </div>
+      </div>
+      <div id="lobby-count" class="count">Jugadores: 1/4</div>
+      <ul id="lobby-players"></ul>
+      <p id="lobby-status" class="status"></p>
+      <p id="lobby-ipad-tip" class="yellow status hidden">Ojo: estás creando la partida desde un iPad. Mientras jueguen,
+        no cambies de app ni bloquees la pantalla, porque se corta para todos. Conviene que la cree alguien en compu.</p>
+      <button id="btn-start" type="button" class="big">EMPEZAR</button>
+      <button id="btn-lobby-leave" type="button">Salir</button>
+      <p class="dim small-note">Cooperativo: puntaje compartido. Si caés, volvés a los 12 s (o cuando cae un jefe).
+        Pierden si caen todos. En multijugador solo el host puede pausar.<br>
+        ¿No conecta? Que cree la partida alguien en compu y, si están en la red del cole, prueben con datos del celular.</p>
+    </div>
+  </div>
+
+  <div id="busy" class="overlay hidden">
+    <div class="panel small">
+      <div class="spinner" aria-hidden="true"></div>
+      <p id="busy-msg" class="status">Conectando…</p>
+      <button id="btn-busy-cancel" type="button">Cancelar</button>
+    </div>
+  </div>
+
   <div id="pause" class="overlay hidden">
     <div class="panel small">
       <h2>PAUSA</h2>
+      <p id="pause-msg" class="status hidden"></p>
       <button id="btn-resume" type="button" class="big">SEGUIR</button>
       <button id="btn-pause-restart" type="button">Reiniciar</button>
       <button id="btn-pause-menu" type="button">Menú</button>
+    </div>
+  </div>
+
+  <div id="cmenu" class="overlay see-through hidden">
+    <div class="panel small">
+      <h2>MENÚ</h2>
+      <p class="status">El juego sigue corriendo: en multijugador solo el host puede pausar.</p>
+      <button id="btn-cmenu-resume" type="button" class="big">SEGUIR</button>
+      <button id="btn-cmenu-leave" type="button">Salir de la partida</button>
     </div>
   </div>
 
@@ -57,11 +119,15 @@
       <h2 id="end-title">GAME OVER</h2>
       <p id="end-stats"></p>
       <p id="end-record" class="yellow"></p>
+      <p id="end-msg" class="status hidden"></p>
       <button id="btn-retry" type="button" class="big">REINTENTAR</button>
       <button id="btn-end-menu" type="button">Menú</button>
     </div>
   </div>
 
+  <div id="toast" class="hidden" role="status"></div>
+
+  <script src="peerjs.min.js"></script>
   <script src="game.js"></script>
 </body>
 </html>

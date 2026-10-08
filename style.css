@@ -53,6 +53,8 @@ body { position: fixed; inset: 0; }
   border: 2px solid rgba(0, 240, 255, 0.55);
   border-radius: 16px;
   box-shadow: 0 0 28px rgba(0, 240, 255, 0.35), inset 0 0 22px rgba(255, 40, 180, 0.12);
+  overflow-y: auto;
+  touch-action: pan-y;
 }
 .panel.small { width: min(420px, 90vw); }
 
@@ -69,7 +71,7 @@ h2 { font-size: 36px; }
 
 label { display: block; color: #ffdc3c; font-size: 15px; margin-bottom: 6px; }
 
-input#name {
+input#name, input#code {
   /* 16px o más: si no, Safari del iPad hace zoom al tocar el campo */
   font: inherit;
   font-size: 22px;
@@ -86,7 +88,7 @@ input#name {
   user-select: text;
   touch-action: manipulation;
 }
-input#name:focus { box-shadow: 0 0 20px rgba(255, 220, 60, 0.7); }
+input#name:focus, input#code:focus { box-shadow: 0 0 20px rgba(255, 220, 60, 0.7); }
 
 button {
   font: inherit;
@@ -149,4 +151,105 @@ button.big {
   border: 2px solid rgba(0, 240, 255, 0.6);
   border-radius: 12px;
   box-shadow: 0 0 10px rgba(0, 240, 255, 0.35);
+}
+
+/* ---------- multijugador ---------- */
+input#code {
+  width: min(260px, 70%);
+  font-size: 30px;
+  letter-spacing: 8px;
+  text-transform: uppercase;
+  border-color: #00f0ff;
+  box-shadow: 0 0 12px rgba(0, 240, 255, 0.35);
+}
+.code-label { margin-top: 14px; color: #00f0ff; }
+.row { display: flex; justify-content: center; flex-wrap: wrap; gap: 0 4px; margin-top: 4px; }
+button.mid {
+  min-width: 220px;
+  font-size: 18px;
+  font-weight: bold;
+  letter-spacing: 1px;
+  color: #fff;
+  background: #2a1838;
+  border-color: #ff28b4;
+  box-shadow: 0 0 12px rgba(255, 40, 180, 0.45);
+}
+.cyan { color: #7ff6ff; }
+.invite { color: #7ff6ff; font-size: 16px; margin: 12px 0 0; }
+.msg {
+  margin: 14px auto 0;
+  max-width: 560px;
+  padding: 10px 14px;
+  color: #ffd0dc;
+  background: rgba(255, 60, 90, 0.15);
+  border: 1px solid rgba(255, 60, 90, 0.7);
+  border-radius: 10px;
+  font-size: 15px;
+  line-height: 1.4;
+}
+.code {
+  font-size: clamp(40px, 9vw, 64px);
+  font-weight: bold;
+  letter-spacing: 12px;
+  color: #ffdc3c;
+  text-shadow: 0 0 12px #ffdc3c, 0 0 30px #ff28b4;
+  margin: 2px 0 6px;
+  -webkit-user-select: text;
+  user-select: text;
+}
+.share input {
+  font: inherit;
+  font-size: 16px;
+  width: min(460px, 90%);
+  padding: 6px 10px;
+  text-align: center;
+  color: #a9b8d8;
+  background: #0b1230;
+  border: 1px solid #46628a;
+  border-radius: 8px;
+  -webkit-user-select: text;
+  user-select: text;
+}
+.count { margin-top: 14px; color: #ffdc3c; font-size: 15px; }
+#lobby-players { list-style: none; margin: 8px auto 0; padding: 0; max-width: 360px; text-align: left; }
+#lobby-players li {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 12px;
+  margin: 5px 0;
+  font-size: 19px;
+  background: rgba(20, 28, 60, 0.7);
+  border-radius: 10px;
+}
+#lobby-players .dot { width: 14px; height: 14px; border-radius: 50%; flex: none; }
+#lobby-players .tag { margin-left: auto; color: #7890b4; font-size: 13px; }
+.status { color: #e6eefa; font-size: 15px; line-height: 1.4; margin: 10px 0 0; }
+.small-note { font-size: 12.5px; margin: 12px 0 0; line-height: 1.4; }
+.overlay.see-through { background: rgba(2, 3, 10, 0.25); }
+.spinner {
+  width: 46px;
+  height: 46px;
+  margin: 6px auto 4px;
+  border-radius: 50%;
+  border: 4px solid rgba(0, 240, 255, 0.2);
+  border-top-color: #00f0ff;
+  animation: spin 0.9s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+#toast {
+  position: fixed;
+  left: 50%;
+  top: calc(env(safe-area-inset-top) + 12px);
+  transform: translateX(-50%);
+  max-width: 80vw;
+  padding: 9px 16px;
+  font-size: 15px;
+  color: #fff;
+  background: rgba(10, 14, 34, 0.9);
+  border: 1px solid rgba(0, 240, 255, 0.6);
+  border-radius: 10px;
+  box-shadow: 0 0 14px rgba(0, 240, 255, 0.35);
+  z-index: 20;
+  pointer-events: none;
 }
