@@ -6,9 +6,16 @@
  * Todo se dibuja en <canvas>, sin imágenes ni fuentes externas. El modo solo anda sin internet.
  * Multijugador: WebRTC peer-to-peer con PeerJS (peerjs.min.js, incluido en el repo). El navegador del
  * host simula todo; los demás mandan sus controles y reciben "fotos" del estado ~20 veces por segundo.
+ * v5.1 web: Hangar (armaduras, mejoras, licencias de armas, vidas extra), Luces ✦ y logros. La lógica está en
+ * hangar-core.js, el arte en hangar-art.js y las pantallas en hangar-ui.js (ver README-hangar-web.md).
  */
 'use strict';
 (function () {
+  // si el navegador guardó un index.html viejo (sin los scripts del Hangar), pedimos recargar en vez de romperse
+  if (!window.NeonHangar || !window.NeonArt || !window.NeonHangarUI) {
+    document.body.innerHTML = '<p style="color:#fff;font:18px sans-serif;padding:24px">Hay una versión nueva del juego. Recargá la página (en el iPad: cerrá y volvé a abrir el link).</p>';
+    return;
+  }
   // ---------------------------------------------------------------------------
   // Constantes (mismos valores que la versión de Python)
   // ---------------------------------------------------------------------------
@@ -50,6 +57,12 @@
   // ---- Vidas (spec §3) ----
   const START_LIVES = 5, MAX_LIVES = 5, RESPAWN_SHORT = 2, RESPAWN_INVULN = 2;
   const POWERUP_COLORS = { heal: LIME, magnet: CYAN, score: YELLOW, rapid: ORANGE };
+  // ---- v5.1 Hangar / perfil ----
+  const HG = window.NeonHangar, ART = window.NeonArt;
+  const HG_PROTO = 1; // versión del Hangar en red (el PROTO de la partida no cambia: ver README-hangar-web.md)
+  const PERFIL = HG.createPerfil({
+    getItem: (k) => localStorage.getItem(k), setItem: (k, v) => localStorage.setItem(k, v), removeItem: (k) => localStorage.removeItem(k),
+  }, { active: new URLSearchParams(location.search).get('perfil') !== 'off' }); // ?perfil=off: sin Hangar (pruebas)
   const FONT = 'ui-monospace, Menlo, Consolas, "Courier New", monospace';
   const LS_NAME = 'neonDodge.nombre', LS_BEST = 'neonDodge.record', LS_MAP = 'neonDodge.mapa';
 
@@ -131,6 +144,7 @@
     view.scale = Math.min(view.w / W, view.h / H);
     view.ox = (view.w - W * view.scale) / 2;
     view.oy = (view.h - H * view.scale) / 2;
+    if (window.__hgLayout) window.__hgLayout(view);
   }
   window.addEventListener('resize', resize);
   window.addEventListener('orientationchange', () => setTimeout(resize, 200));
@@ -471,6 +485,10 @@
     ctx.fillStyle = rgb(WHITE);
     circle(px, py, 4);
     ctx.fill();
+    if (p.armor && p.armor !== 'sin_armadura' && ART.armor[p.armor]) { // v5.1: armadura encima de la nave (con el color de cada jugador)
+      ART.drawLayers(ctx, ART.armor[p.armor], px, py, r, a, bg.pulse, { over: { jugador: p.color } });
+    }
+    if (p.shield) { ctx.strokeStyle = 'rgb(150,230,255)'; ctx.lineWidth = 1.5; circle(px, py, r + 9); ctx.stroke(); } // escudo cargado
   }
 
   function drawEnemy(e) {
@@ -1062,12 +1080,17 @@
   // Jugadores. hp = 1 vivo / 0 muerto (esperando reaparecer o "fuera"); lives = vidas que le quedan.
   // ---------------------------------------------------------------------------
   function spawnPoint(idx) { const s = MAP.spawns[(idx | 0) % MAP.spawns.length]; return [s[0], s[1]]; }
-  function makePlayer(id, name, idx = 0) {
+  function makePlayer(id, name, idx = 0, lo) {
     const [x, y] = spawnPoint(idx);
-    return { id, name: name || 'Jugador', slot: idx, x, y, r: 14, speed: 280, hp: 1, lives: START_LIVES, out: false,
-      invuln: 0, magnet: 0, rapid: 0, weapon: 0, wcd: [0, 0, 0], gcd: 0, tpCd: 1.0,
+    const e = HG.loadoutEffects(lo); // loadout vacío = exactamente la web sin Hangar
+    return { id, name: name || 'Jugador', slot: idx, x, y, r: 14, speed: 280 * e.speed, hp: 1, lives: START_LIVES + e.extraLives, out: false,
+      invuln: 0, magnet: 0, rapid: 0, weapon: e.arma, wcd: [0, 0, 0], gcd: 0, tpCd: 1.0,
       angle: -Math.PI / 2, trailAcc: 0, color: PLAYER_COLORS[id % 4],
-      respawn: 0, firing: false, away: false, inp: null, seq: 0, lastInput: 0 };
+      respawn: 0, firing: false, away: false, inp: null, seq: 0, lastInput: 0,
+      // v5.1 Hangar
+      armor: e.armadura, maxLives: e.maxLives, dmg: e.dmg, cdm: e.cdm, mgSpread: e.mgSpread, rpgRadius: e.rpgRadius, pickup: e.pickup,
+      pu: e.pu, respawnInv: e.respawnInv, shieldS: e.shieldS, shieldCd: 0, shield: e.shieldS > 0,
+      bossHit: false, lostLife: false, usedW: new Set(), achSent: new Set() };
   }
   function stepMove(p, mx, my, dt) {
     const ml = Math.hypot(mx, my);
@@ -1143,8 +1166,8 @@
   useMap(prefMap()); // preferencia guardada (si no está o está rota, Arena Neón)
 
   function initRound(roster) {
-    roster = roster || [{ id: 0, name: G.name }];
-    G.players = roster.map((r, i) => makePlayer(r.id, r.name, r.slot !== undefined ? r.slot : i));
+    roster = roster || [{ id: 0, name: G.name, lo: PERFIL.loadout() }];
+    G.players = roster.map((r, i) => makePlayer(r.id, r.name, r.slot !== undefined ? r.slot : i, r.lo));
     G.player = G.players.find((p) => p.id === NET.myId) || G.players[0];
     G.enemies = []; G.bullets = []; G.ebullets = []; G.powerups = []; G.mines = []; G.missiles = [];
     G.mineOrbit = 0;
@@ -1156,7 +1179,8 @@
     G.shake = 0; G.simTime = 0; G.t0 = 0; G.nid = 0;
     G.banner = { text: '', c: WHITE, t: 0 };
     G.newRecord = false; G.overMsg = '';
-    G.myWeapon = 0; // arma elegida (se aplica en la simulación; al reiniciar vuelve a la pistola)
+    G.myWeapon = G.player ? G.player.weapon | 0 : 0; // arma elegida (al reiniciar vuelve al arma inicial del Hangar; sin Hangar, la pistola)
+    G.roundAwarded = false; G.roundLuces = 0;
     G.debugBossT = DEBUG_BOSS ? 1.0 : 0;
   }
   initRound();
@@ -1281,6 +1305,7 @@
     boss.hp = boss.maxHp;
     G.boss = boss;
     G.nextBossIdx = idx;
+    for (const p of G.players) p.bossHit = false; // «Ni un rasguño»: cuenta desde que entra cada jefe
     G.stats.bossesSeen.push(boss.name);
     const fin = idx === BOSS_TYPES.length - 1 ? ' (FINAL)' : '';
     G.showBanner(`!! JEFE ${idx + 1}/${BOSS_TYPES.length}: ${boss.name}${fin} !!`, boss.color, 2.5);
@@ -1297,6 +1322,11 @@
   function onBossKilled(boss) {
     if (G.boss !== boss) return; // ya contado (por ejemplo, bala y explosión en el mismo frame)
     G.stats.bossesKilled++;
+    const bl = { WARDEN: 'guardian_caido', SEEKER: 'ojo_cerrado' }[boss.name];
+    for (const p of G.players) {
+      if (bl) achOnce(p, bl);
+      if (!p.bossHit && p.hp > 0) achOnce(p, 'secreto_2');
+    }
     G.bossesDefeated++;
     G.score += boss.bonus;
     G.popup(boss.x, boss.y - 60, `+${boss.bonus}`, YELLOW, true);
@@ -1325,7 +1355,21 @@
     }
   }
 
-  function killEnemy(e, byPlayer) {
+  // v5.1: logros. ach() manda el evento al perfil del jugador (el mío, o por red al cliente que corresponde)
+  function ach(pid, kind, n) {
+    if (pid === NET.myId) PERFIL.event(kind, n);
+    else if (NET.mode === 'host') {
+      const r = NET.roster.find((q) => q.id === pid);
+      if (r && r.conn && r.conn.hg) safeSend(r.conn, { t: 'ach', k: kind, n: n || 1 });
+    }
+  }
+  function achOnce(p, id) {
+    if (p.achSent.has(id)) return;
+    p.achSent.add(id);
+    ach(p.id, 'logro:' + id);
+  }
+
+  function killEnemy(e, byPlayer, owner, rpg) {
     if (!e.alive) return;
     e.alive = false;
     const col = ENEMY_COLOR[e.kind];
@@ -1336,6 +1380,7 @@
       G.score += pts;
       G.stats.kills++;
       G.popup(e.x, e.y - 10, `+${pts}`, col);
+      if (owner !== undefined) { ach(owner, 'kill'); if (rpg) ach(owner, 'kill_rpg'); }
       if (Math.random() < 0.05) spawnPowerup(e.x, e.y);
     }
   }
@@ -1363,10 +1408,17 @@
   // Le pega al jugador: pierde 1 vida (una sola por frame: queda muerto o invulnerable). Devuelve si le pegó.
   function damagePlayer(p) {
     if (G.winTimer > 0 || p.invuln > 0 || p.hp <= 0) return false;
+    p.bossHit = true;
+    if (p.shieldS > 0 && p.shieldCd <= 0) { // armadura Prisma / Coraza: absorbe el golpe (no pierde vida)
+      p.shieldCd = p.shieldS; p.shield = false; p.invuln = 1.0;
+      G.particles.ring(p.x, p.y, [150, 230, 255], 50, 0.35, 3);
+      return true;
+    }
     G.particles.burst(p.x, p.y, RED, 22, 220, 6);
     shakeFor(p, 8);
     if (G.god) { p.invuln = 1.2; return true; } // modo dios (tests): nunca pierde vidas
     G.stats.deaths++;
+    p.lostLife = true;
     p.lives = Math.max(0, p.lives - 1);
     p.hp = 0;
     p.firing = false;
@@ -1389,7 +1441,8 @@
   function revivePlayer(p) {
     const wasOut = p.out;
     if (wasOut) { p.out = false; p.lives = 1; } // en co-op vuelve con 1 vida
-    p.hp = 1; p.invuln = RESPAWN_INVULN; p.respawn = 0; p.tpCd = 1.0; // conserva el arma (spec §8, 1.25)
+    p.hp = 1; p.invuln = p.respawnInv; p.respawn = 0; p.tpCd = 1.0; // conserva el arma (spec §8, 1.25); Alas Halcón: 1,2 s
+    if (wasOut) for (const q of G.players) if (q !== p && q.hp > 0) achOnce(q, 'nadie_se_queda');
     [p.x, p.y] = safeSpawn();
     G.particles.ring(p.x, p.y, p.color, 90, 0.6, 3);
     if (NET.rec) NET.ev.push(['tp', p.id, r0(p.x), r0(p.y)]); // que el cliente salte, no que cruce la pantalla
@@ -1402,7 +1455,7 @@
   function addBullet(p, x, y, a, wi) {
     const wp = WEAPONS[wi];
     const b = { id: ++G.nid, x, y, vx: Math.cos(a) * wp.speed, vy: Math.sin(a) * wp.speed, life: wp.life, r: wp.r,
-      dmg: wp.dmg, c: p.color, w: wi, owner: p.id };
+      dmg: wi === 2 ? wp.dmg : wp.dmg * p.dmg[wi], c: p.color, w: wi, owner: p.id }; // RPG: «Carga doble» se aplica en la explosión
     G.bullets.push(b);
     if (NET.rec) NET.ev.push(['pb', b.id, r0(x), r0(y), r0(b.vx), r0(b.vy), ci(b.c), r0(G.t0 * 1000), wi]);
     if (p === G.player) G.stats.shots++;
@@ -1414,7 +1467,8 @@
     const wi = p.weapon, wp = WEAPONS[wi];
     let [dx, dy] = norm(ax - p.x, ay - p.y);
     if (!dx && !dy) { dx = Math.cos(p.angle); dy = Math.sin(p.angle); }
-    const a = Math.atan2(dy, dx) + rand(-wp.spread, wp.spread) * deg;
+    const spread = wi === 1 ? p.mgSpread : wp.spread; // «Mira fina»
+    const a = Math.atan2(dy, dx) + rand(-spread, spread) * deg;
     dx = Math.cos(a); dy = Math.sin(a);
     const mx = p.x + dx * (p.r + 8), my = p.y + dy * (p.r + 8);
     addBullet(p, mx, my, a, wi);
@@ -1423,10 +1477,11 @@
     if (wi === 2) shakeFor(p, 3);
     // ametralladora y RPG arrastran el sobrante del cuadro (12/s y 1,2 s exactos aunque los cuadros no duren
     // justo 1/60 s); la pistola queda como en la v3. Tope global (1.8): 12/s, o 0,065 s con el disparo rápido.
-    const cdNow = p.rapid > 0 ? wp.cdRapid : wp.cd, gate = p.rapid > 0 ? GLOBAL_CD_RAPID : GLOBAL_CD;
+    const cdNow = (p.rapid > 0 ? wp.cdRapid : wp.cd) * p.cdm[wi], gate = p.rapid > 0 ? GLOBAL_CD_RAPID : GLOBAL_CD;
     const carry = wi !== 0 ? Math.min(0, p.wcd[wi]) : 0;
     p.wcd[wi] = cdNow + carry;
     p.gcd = Math.min(cdNow, gate) + Math.min(0, p.gcd);
+    if (!p.usedW.has(wi)) { p.usedW.add(wi); if (p.usedW.size >= WEAPONS.length) achOnce(p, 'arsenal'); }
   }
 
   // explosión del RPG: RPG_SPLASH a todo lo que esté a <= RPG_RADIUS del punto (centro), y el impacto directo
@@ -1437,23 +1492,27 @@
     const rec = NET.rec; NET.rec = false; // las partículas van solo en el evento 'ex' (si no, el cliente la ve doble)
     G.particles.burst(x, y, ORANGE, 34, 320, 7, 0.7);
     G.particles.burst(x, y, YELLOW, 14, 200, 5, 0.5);
-    G.particles.ring(x, y, ORANGE, RPG_RADIUS, 0.45, 5);
+    const own = G.players.find((q) => q.id === b.owner);
+    const rad = own ? own.rpgRadius : RPG_RADIUS, dm = own ? own.dmg[2] : 1; // «Cohete grande» / «Carga doble» (esta última, a los enemigos, como en la compu)
+    G.particles.ring(x, y, ORANGE, rad, 0.45, 5);
     NET.rec = rec;
     G.addShake(5);
-    if (NET.rec) NET.ev.push(['ex', r0(x), r0(y)]);
+    if (NET.rec) NET.ev.push(rad === RPG_RADIUS ? ['ex', r0(x), r0(y)] : ['ex', r0(x), r0(y), r0(rad)]);
+    const killsBefore = G.stats.kills;
     for (const e of G.enemies) {
       if (!e.alive) continue;
       const d = Math.hypot(e.x - x, e.y - y);
-      const dmg = (e === direct ? b.dmg : 0) + (d <= RPG_RADIUS ? RPG_SPLASH : 0);
+      const dmg = ((e === direct ? b.dmg : 0) + (d <= rad ? RPG_SPLASH : 0)) * dm;
       if (!dmg) continue;
       e.hp -= dmg; e.flash = 0.06;
-      if (e.hp <= 0.001) killEnemy(e, true);
+      if (e.hp <= 0.001) killEnemy(e, true, b.owner, true);
     }
-    for (const m of G.mines) if (!m.dead && (m === direct || Math.hypot(m.x - x, m.y - y) <= RPG_RADIUS)) killMine(m, true);
-    for (const m of G.missiles) if (!m.dead && (m === direct || Math.hypot(m.x - x, m.y - y) <= RPG_RADIUS)) killMissile(m, true);
+    if (own && G.stats.kills - killsBefore >= 3) achOnce(own, 'secreto_1'); // «Tres de un saque»
+    for (const m of G.mines) if (!m.dead && (m === direct || Math.hypot(m.x - x, m.y - y) <= rad)) killMine(m, true);
+    for (const m of G.missiles) if (!m.dead && (m === direct || Math.hypot(m.x - x, m.y - y) <= rad)) killMissile(m, true);
     const boss = G.boss;
     if (boss && boss.vulnerable) {
-      const inR = Math.hypot(boss.x - x, boss.y - y) <= RPG_RADIUS + boss.r;
+      const inR = Math.hypot(boss.x - x, boss.y - y) <= rad + boss.r;
       const dmg = (direct === boss ? b.dmg : 0) + (inR ? RPG_SPLASH : 0);
       if (dmg) { G.stats.rpgBossHits++; if (boss.damage(dmg)) onBossKilled(boss); }
     }
@@ -1507,6 +1566,7 @@
       stepMove(p, inp.mx, inp.my, dt);
       if (Math.hypot(inp.ax - p.x, inp.ay - p.y) > 2) p.angle = Math.atan2(inp.ay - p.y, inp.ax - p.x);
       p.invuln = Math.max(0, p.invuln - dt);
+      if (p.shieldS > 0) { p.shieldCd = Math.max(0, p.shieldCd - dt); p.shield = p.shieldCd <= 0; }
       p.magnet = Math.max(0, p.magnet - dt);
       p.rapid = Math.max(0, p.rapid - dt);
       if (p.tpCd > 0) p.tpCd = Math.max(0, p.tpCd - dt);
@@ -1638,25 +1698,27 @@
         let m = magnets[0];
         for (const q of magnets) if ((q.x - u.x) ** 2 + (q.y - u.y) ** 2 < (m.x - u.x) ** 2 + (m.y - u.y) ** 2) m = q;
         const [nx, ny] = norm(m.x - u.x, m.y - u.y);
-        u.x += nx * 240 * dt; u.y += ny * 240 * dt;
+        u.x += nx * 240 * m.pickup * dt; u.y += ny * 240 * m.pickup * dt; // «Imán grande»
       }
       u.life -= dt;
       u.bob += dt * 4;
     }
     G.powerups = G.powerups.filter((u) => u.life > 0);
     for (const u of G.powerups.slice()) {
-      const taker = G.players.find((p) => p.hp > 0 && (u.x - p.x) ** 2 + (u.y - p.y) ** 2 < (u.r + p.r) ** 2);
+      const taker = G.players.find((p) => p.hp > 0 && (u.x - p.x) ** 2 + (u.y - p.y) ** 2 < ((u.r + p.r) * p.pickup) ** 2);
       if (!taker) continue;
       G.powerups.splice(G.powerups.indexOf(u), 1);
       G.particles.burst(u.x, u.y, POWERUP_COLORS[u.kind], 16, 150);
-      if (u.kind === 'heal') { // +1 vida (tope 5); si ya tenés 5, puntos
-        if (taker.lives < MAX_LIVES) { taker.lives++; G.popup(u.x, u.y, '+1 VIDA', LIME); }
+      if (u.kind === 'heal') { // +1 vida (tope 5; 7 con «Corazón de repuesto»); si ya tenés el tope, puntos
+        if (taker.lives < taker.maxLives) { taker.lives++; G.popup(u.x, u.y, '+1 VIDA', LIME); }
         else { G.score += SCORE_POWERUP; G.popup(u.x, u.y, `+${SCORE_POWERUP}`, YELLOW); }
       }
-      else if (u.kind === 'magnet') { taker.magnet = 6; G.popup(u.x, u.y, 'IMÁN', CYAN); }
-      else if (u.kind === 'rapid') { taker.rapid = 6; G.popup(u.x, u.y, 'DISPARO RÁPIDO', ORANGE); }
+      else if (u.kind === 'magnet') { taker.magnet = 6 * taker.pu; G.popup(u.x, u.y, 'IMÁN', CYAN); }
+      else if (u.kind === 'rapid') { taker.rapid = 6 * taker.pu; G.popup(u.x, u.y, 'DISPARO RÁPIDO', ORANGE); }
       else { G.score += SCORE_POWERUP; G.popup(u.x, u.y, `+${SCORE_POWERUP}`, YELLOW); }
     }
+
+    if (G.score >= 220) for (const p of G.players) if (!p.lostLife) achOnce(p, 'intocable'); // 220 puntos sin perder una vida
 
     // puntaje por supervivencia: +1 por segundo
     G.elapsed += dt;
@@ -1720,7 +1782,7 @@
       if (rpg) { bulletGone(b); rpgExplode(b, b.x, b.y, e); return; }
       bulletGone(b, WHITE);
       e.hp -= b.dmg; e.flash = 0.06;
-      if (e.hp <= 0.001) killEnemy(e, true);
+      if (e.hp <= 0.001) killEnemy(e, true, b.owner, false);
       return;
     }
     for (const m of G.mines) {
@@ -1886,7 +1948,7 @@
       opened = true;
       clearTimeout(NET.timer);
       NET.code = code;
-      NET.roster = [{ id: 0, name: G.name, conn: null, key: NET.key }];
+      NET.roster = [{ id: 0, name: G.name, conn: null, key: NET.key, lo: PERFIL.loadout() }];
       showLobby();
     });
     peer.on('connection', (conn) => hostOnConn(conn));
@@ -1932,12 +1994,13 @@
     if (d.t === 'h') {
       if (d.v !== PROTO) { safeSend(conn, { t: 'ver' }); setTimeout(() => conn.close(), 400); return; }
       const name = cleanName(d.n), key = String(d.k || '').slice(0, 20);
+      const lo = HG.loadoutSanitize(d.lo); // el host valida el loadout: armadura conocida, mejoras acotadas, arma 0..2 (sin d.lo = nave de serie)
       let r = key && NET.roster.find((q) => q.key === key && q.id !== 0);
       const ghost = key && NET.ghosts.get(key);
       if (ghost) NET.ghosts.delete(key);
       if (r) { // se reconectó (por ejemplo, el iPad volvió de segundo plano)
         const old = r.conn;
-        r.conn = conn; r.name = name;
+        r.conn = conn; r.name = name; r.lo = lo;
         if (old && old !== conn) { old.replaced = true; try { old.close(); } catch (e) { /* nada */ } }
         const p = G.players.find((q) => q.id === r.id);
         if (p) { p.away = false; p.name = name; }
@@ -1946,7 +2009,7 @@
         const back = ghost && performance.now() - ghost.t < 90000 && !NET.roster.some((q) => q.id === ghost.id);
         let id = back ? ghost.id : 1;
         while (!back && NET.roster.some((q) => q.id === id)) id++;
-        r = { id, name, conn, key };
+        r = { id, name, conn, key, lo };
         NET.roster.push(r);
         NET.roster.sort((a, b) => a.id - b.id);
         const txt = back ? `${name} volvió a la partida` : `${name} se unió a la partida`;
@@ -1962,15 +2025,16 @@
         }
       }
       conn.pid = r.id;
+      conn.hg = d.hg | 0; // versión del Hangar del cliente (0 = web sin Hangar: no se le mandan avisos de logros)
       if (inGame() && !G.players.some((q) => q.id === r.id)) { // se suma con la partida empezada
-        const p = makePlayer(r.id, r.name, Math.max(0, NET.roster.indexOf(r)));
+        const p = makePlayer(r.id, r.name, Math.max(0, NET.roster.indexOf(r)), r.lo);
         [p.x, p.y] = safeSpawn();
         p.invuln = 2;
         G.players.push(p);
         G.players.sort((a, b) => a.id - b.id);
         rescaleBoss();
       }
-      safeSend(conn, { t: 'w', id: r.id, code: NET.code, mp: MAP.id });
+      safeSend(conn, { t: 'w', id: r.id, code: NET.code, mp: MAP.id, hg: HG_PROTO, lo: r.lo });
       hostRoster();
       if (inGame()) {
         safeSend(conn, { t: 'go', mp: MAP.id, rd: G.round });
@@ -2011,7 +2075,9 @@
   }
 
   function hostRoster() {
-    const msg = { t: 'lb', p: NET.roster.map((r) => [r.id, r.name]), mp: MAP.id };
+    // lo = [id, armadura, vidas máximas] de cada uno (para dibujarlos igual en todas las compus; las versiones sin Hangar lo ignoran)
+    const msg = { t: 'lb', p: NET.roster.map((r) => [r.id, r.name]), mp: MAP.id,
+      lo: NET.roster.map((r) => { const e = HG.loadoutEffects(r.lo); return [r.id, e.armadura, e.maxLives]; }) };
     for (const r of NET.roster) if (r.conn) safeSend(r.conn, msg);
   }
 
@@ -2019,7 +2085,9 @@
     if (NET.mode !== 'host') return;
     G.name = cleanName(nameInput.value);
     NET.roster[0].name = G.name;
-    initRound(NET.roster.map((r, i) => ({ id: r.id, name: r.name, slot: i })));
+    NET.roster[0].lo = PERFIL.loadout();
+    initRound(NET.roster.map((r, i) => ({ id: r.id, name: r.name, slot: i, lo: r.lo })));
+    PERFIL.armorUsed();
     G.round = (G.roundN = (G.roundN || 0) + 1);
     NET.ghosts.clear();
     NET.ev = []; NET.sendAcc = 1;
@@ -2042,7 +2110,7 @@
       t: 's', q: ++NET.seq, tm: r0(G.simTime * 1000), st: STATES.indexOf(G.state), sc: G.score, wv: G.wave,
       bd: G.bossesDefeated, nb: G.nextBossIdx, wt: G.winTimer > 0 ? 1 : 0,
       P: G.players.map((p) => [p.id, r1(p.x), r1(p.y), r2(p.angle), p.hp, r1(p.invuln), r1(p.magnet), r1(p.rapid),
-        r1(p.respawn), p.firing ? 1 : 0, p.away ? 1 : 0, p.seq || 0, p.lives, p.out ? 1 : 0, p.weapon, r2(p.wcd[2])]),
+        r1(p.respawn), p.firing ? 1 : 0, p.away ? 1 : 0, p.seq || 0, p.lives, p.out ? 1 : 0, p.weapon, r2(p.wcd[2]), p.shield ? 1 : 0]),
       E: G.enemies.map((e) => [e.id, KINDS.indexOf(e.kind), r0(e.x), r0(e.y), r2(e.angle), e.flash > 0 ? 1 : 0]),
       B: b ? [b.index, r1(b.x), r1(b.y), r2(b.angle), Math.ceil(b.hp), b.maxHp, b.state === 'enter' ? 0 : 1,
         b.flash > 0 ? 1 : 0, b.mode ? TITAN_MODES.indexOf(b.mode) : 0, r2(b.modeT || 0), r2(b.dx || 0), r2(b.dy || 0),
@@ -2116,7 +2184,8 @@
 
   // ----------------------------- CLIENTE ---------------------------------------
   const C = { snaps: [], bullets: new Map(), names: new Map(), offset: null, renderT: 0, hist: [], seq: 0,
-    pred: null, corr: [0, 0], boss: null, trail: new Map(), lastSt: -1, rx: 0, lastQ: 0 };
+    pred: null, corr: [0, 0], boss: null, trail: new Map(), lastSt: -1, rx: 0, lastQ: 0,
+    myLo: HG.loadoutSanitize(null), myEff: HG.loadoutEffects(null), ex: new Map() };
 
   function clientJoin(code, rejoin = false) {
     code = cleanCode(code);
@@ -2140,7 +2209,7 @@
       NET.timer = setTimeout(() => { if (!welcomed) fail(rejoin ? 'Se perdió la conexión con el host.' : MSG_P2P); }, 12000);
       const conn = peer.connect(PEER_PREFIX + code, { reliable: true, serialization: 'json' });
       NET.conn = conn;
-      conn.on('open', () => { NET.lastMsg = performance.now(); safeSend(conn, { t: 'h', n: G.name, v: PROTO, k: NET.key }); });
+      conn.on('open', () => { NET.lastMsg = performance.now(); safeSend(conn, { t: 'h', n: G.name, v: PROTO, k: NET.key, hg: HG_PROTO, lo: PERFIL.loadout() }); });
       conn.on('data', (d) => {
         if (NET.conn !== conn) return;
         if (d && d.t === 'w') { welcomed = true; clearTimeout(NET.timer); }
@@ -2203,12 +2272,17 @@
       }
       case 'w':
         NET.myId = d.id; NET.reconnects = 0;
+        NET.hg = d.hg | 0; // 0 = host de una versión sin Hangar: se juega sin armadura ni mejoras (ver README)
+        C.myLo = HG.loadoutSanitize(NET.hg ? d.lo : null);
+        C.myEff = HG.loadoutEffects(C.myLo);
+        if (!NET.hg && !NET.oldHostWarned) { NET.oldHostWarned = true; toast('Este host tiene la versión sin Hangar: jugás sin armadura ni mejoras (tus Luces y logros igual cuentan).'); }
         if (d.mp) useMap(d.mp, false); // el mapa del host (sin pisar mi preferencia)
         if (!inGame()) showLobby();
         break;
       case 'lb':
         NET.roster = d.p.map(([id, name]) => ({ id, name }));
         C.names = new Map(d.p);
+        C.ex = new Map((Array.isArray(d.lo) ? d.lo : []).map((q) => [q[0], { armadura: String(q[1]), maxLives: q[2] | 0 }]));
         if (d.mp && !inGame()) useMap(d.mp, false);
         if (G.state === 'lobby') renderLobby();
         break;
@@ -2216,6 +2290,7 @@
       case 'full': clientFail('La partida está llena (ya hay 4 jugadores).'); break;
       case 'ver': clientFail(TXT.version); break;
       case 'end': clientLeave('El host cerró la partida.'); break;
+      case 'ach': if (NET.hg && d.k) PERFIL.remoteEvent(String(d.k), d.n | 0 || 1); break; // logros que cuenta el host (solo los de la lista blanca)
       default: break; // 'pg' = sigo vivo
     }
   }
@@ -2226,6 +2301,7 @@
     C.snaps = []; C.bullets.clear(); C.offset = null; C.renderT = 0; C.hist = []; C.pred = null; C.corr = [0, 0];
     C.boss = null; C.trail.clear(); C.lastSt = -1; C.lastQ = 0;
     C.weaponSync = true; // al entrar o reconectar, tomo el arma que tengo en el host (no la piso con la pistola)
+    if (NET.hg) PERFIL.armorUsed();
     setState('play');
   }
 
@@ -2254,7 +2330,7 @@
     const ack = e[11];
     while (C.hist.length && C.hist[0].s <= ack) C.hist.shift();
     if (e[4] <= 0) { C.pred = null; return; }
-    const tmp = { x: e[1], y: e[2], r: 14, speed: 280 };
+    const tmp = { x: e[1], y: e[2], r: 14, speed: 280 * C.myEff.speed };
     for (const h of C.hist) stepMove(tmp, h.mx, h.my, h.dt);
     if (!C.pred) { C.pred = { x: tmp.x, y: tmp.y }; C.corr = [0, 0]; return; }
     const ex = tmp.x - C.pred.x, ey = tmp.y - C.pred.y;
@@ -2288,7 +2364,7 @@
       }
       case 'ex': // explosión del RPG (el daño lo calculó el host)
         P.burst(e[1], e[2], ORANGE, 34, 320, 7, 0.7); P.burst(e[1], e[2], YELLOW, 14, 200, 5, 0.5);
-        P.ring(e[1], e[2], ORANGE, RPG_RADIUS, 0.45, 5); G.shake = Math.max(G.shake, 5);
+        P.ring(e[1], e[2], ORANGE, e[3] || RPG_RADIUS, 0.45, 5); G.shake = Math.max(G.shake, 5);
         break;
       case 'tp': P.ring(e[2], e[3], WHITE, 50, 0.4, 3); break; // teletransporte o reaparición: salta, no se interpola
       case 'eb': C.bullets.set(e[1], { p: 0, x: e[2], y: e[3], vx: e[4], vy: e[5], c: cd(e[6]), r: e[7], ts: e[8] / 1000 }); break;
@@ -2344,6 +2420,9 @@
       pl.hp = p0[4]; pl.invuln = lerp(p0[5], q[5], a); pl.magnet = lerp(p0[6], q[6], a); pl.rapid = lerp(p0[7], q[7], a);
       pl.respawn = lerp(p0[8], q[8], a); pl.firing = !!p0[9]; pl.away = !!p0[10];
       pl.lives = p0[12]; pl.out = !!p0[13]; pl.weapon = p0[14] | 0; pl.wcd[2] = p0[15] || 0;
+      pl.shield = !!p0[16];
+      if (id === NET.myId) { pl.armor = C.myEff.armadura; pl.maxLives = C.myEff.maxLives; pl.cdm = C.myEff.cdm; }
+      else { const x = C.ex.get(id); if (x) { pl.armor = x.armadura; pl.maxLives = x.maxLives; } }
       if (p0[4] <= 0 && q[4] > 0 && a > 0.5) { pl.hp = q[4]; pl.x = q[1]; pl.y = q[2]; pl.lives = q[12]; pl.out = !!q[13]; }
       else if (Math.hypot(q[1] - p0[1], q[2] - p0[2]) > 120) { const z = a > 0.5 ? q : p0; pl.x = z[1]; pl.y = z[2]; } // portal: salta
       players.push(pl);
@@ -2438,7 +2517,7 @@
       C.round === undefined ? -1 : C.round]); // [8] = ronda: el host ignora el arma de controles de otra ronda
     G.firing = playing && inp.fire;
     if (C.pred && playing && G.player && G.player.hp > 0) {
-      const tmp = { x: C.pred.x, y: C.pred.y, r: 14, speed: 280 };
+      const tmp = { x: C.pred.x, y: C.pred.y, r: 14, speed: 280 * C.myEff.speed };
       stepMove(tmp, mx, my, dt);
       const k = Math.min(1, dt * 10);
       C.pred.x = clamp(tmp.x + C.corr[0] * k, 14, W - 14);
@@ -2677,7 +2756,7 @@
     text(`SCORE  ${G.score}`, 16, 12, 22, WHITE, { bold: true, glow: 8 });
     // vidas como corazones (a la izquierda: arriba a la derecha están los botones de pausa/reinicio)
     const lives = p.lives === undefined ? START_LIVES : p.lives;
-    for (let i = 0; i < MAX_LIVES; i++) drawHeart(24 + i * 24, 50, 9, i < lives);
+    for (let i = 0; i < (p.maxLives || MAX_LIVES); i++) drawHeart(24 + i * 24, 50, 9, i < lives);
     text(`OLA ${G.wave}   JEFES ${G.bossesDefeated}/${BOSS_TYPES.length}`, 16, 68, 15, DIM);
     let ty = 88;
     if (!G.boss && G.nextBossIdx < BOSS_TYPES.length && G.winTimer <= 0) {
@@ -2738,7 +2817,7 @@
     });
     G.hudWeapon = fmt(TXT.armaHud, { arma: TXT.arma[cur] }); // (lo leen los tests)
     if (cur === 2) { // barrita de recarga del RPG: llena = listo
-      const full = p.rapid > 0 ? WEAPONS[2].cdRapid : WEAPONS[2].cd;
+      const full = (p.rapid > 0 ? WEAPONS[2].cdRapid : WEAPONS[2].cd) * (p.cdm ? p.cdm[2] : 1);
       const k = clamp(1 - (p.wcd ? p.wcd[2] : 0) / full, 0, 1);
       const bw = 120, bx = W / 2 - bw / 2, by = y - 12;
       ctx.fillStyle = 'rgba(25,20,40,0.9)'; ctx.fillRect(bx, by, bw, 6);
@@ -2846,6 +2925,24 @@
     el.textContent = msg;
     el.classList.toggle('hidden', !msg);
   }
+  // ---- v5.1: pantallas HANGAR / LOGROS y aviso de logro (hangar-ui.js) ----
+  function refreshMenuHangar() {
+    $('menu-luces').textContent = `${PERFIL.data.luces} ✦`;
+    $('menu-logros').textContent = `${PERFIL.count()}/${HG.LOGRO_IDS.length}`;
+  }
+  const HGUI = window.NeonHangarUI.create({
+    perfil: PERFIL,
+    onClose: () => toMenu(),
+    onShow: (which, from) => { if (from) G.hgFrom = from; setState(which); },
+  });
+  PERFIL.onUnlock = (id) => { HGUI.pushToast(id); refreshMenuHangar(); };
+  function openHangar(which) {
+    if (NET.mode !== 'solo' || G.state !== 'menu') return; // el Hangar se abre desde el menú (el loadout se manda al unirse a una sala)
+    saveName();
+    menuError('');
+    G.hgFrom = 'menu';
+    setState(which);
+  }
   function showMenuSection(which) {
     $('menu-main').classList.toggle('hidden', which !== 'main');
     $('menu-join').classList.toggle('hidden', which !== 'join');
@@ -2903,6 +3000,7 @@
     menuEl.classList.toggle('hidden', s !== 'menu');
     lobbyEl.classList.toggle('hidden', s !== 'lobby');
     busyEl.classList.toggle('hidden', s !== 'busy');
+    if (s === 'hangar' || s === 'logros') HGUI.show(s, G.hgFrom); else HGUI.hide();
     pauseEl.classList.toggle('hidden', s !== 'pause');
     endEl.classList.add('hidden');
     cmenuEl.classList.add('hidden');
@@ -2920,12 +3018,24 @@
       $('btn-pause-restart').textContent = mode === 'host' ? 'Reiniciar (todos)' : 'Reiniciar';
       $('btn-pause-menu').textContent = mode === 'host' ? 'Cerrar partida' : mode === 'client' ? 'Salir de la partida' : 'Menú';
     }
+    if ((s === 'over' || s === 'win') && !G.roundAwarded) { // Luces ✦ de la partida (cada uno suma las suyas en su perfil)
+      G.roundAwarded = true;
+      G.roundLuces = PERFIL.active ? HG.roundLuces(G.score, G.bossesDefeated, s === 'win') : 0;
+      PERFIL.awardRound(G.roundLuces);
+      if (s === 'win' && NET.mode !== 'client') {
+        for (const p of G.players) {
+          achOnce(p, 'gigante_en_el_suelo');
+          if (NET.mode === 'host') achOnce(p, 'escuadron');
+        }
+      }
+      refreshMenuHangar();
+    }
     if (s === 'over' || s === 'win') {
       if (G.score > G.best) { G.best = G.score; G.newRecord = true; lsSet(LS_BEST, G.best); }
       $('best').textContent = G.best;
       G.endTimer = s === 'win' ? 0.4 : 1.1; // deja ver la explosión antes del cartel
     }
-    if (s === 'menu') $('best').textContent = G.best;
+    if (s === 'menu') { $('best').textContent = G.best; refreshMenuHangar(); }
   }
 
   function showEnd() {
@@ -2935,6 +3045,9 @@
     const who = mode === 'solo' ? G.name : `Equipo: ${G.players.map((p) => p.name).join(', ')}`;
     $('end-stats').textContent = `${who} · Puntaje ${G.score} · Olas ${G.wave} · Jefes ${G.bossesDefeated}/${BOSS_TYPES.length}`;
     $('end-record').textContent = G.newRecord ? '¡Nuevo récord!' : `Récord: ${G.best}`;
+    const el = $('end-luces');
+    el.textContent = G.roundLuces > 0 ? `+${G.roundLuces} ✦ Luces (tenés ${PERFIL.data.luces}) · gastalas en el Hangar del menú` : '';
+    el.classList.toggle('hidden', !el.textContent);
     const overMsg = win ? '' : (G.overMsg || (G.players.length > 1 ? TXT.goCoop : TXT.goSolo));
     $('end-msg').textContent = [overMsg, mode === 'client' ? 'Esperando a que el host arranque otra partida…' : ''].filter(Boolean).join(' ');
     $('end-msg').classList.toggle('hidden', !$('end-msg').textContent);
@@ -2949,6 +3062,7 @@
     saveName();
     NET.myId = 0;
     initRound();
+    PERFIL.armorUsed();
     setState('play');
   }
   function togglePause() {
@@ -3029,6 +3143,8 @@
 
   const tap = (el, fn) => el.addEventListener('click', (e) => { e.preventDefault(); fn(); });
   tap($('btn-play'), () => { menuError(''); startGame(); });
+  tap($('btn-hangar'), () => openHangar('hangar'));
+  tap($('btn-logros'), () => openHangar('logros'));
   tap($('btn-host'), () => { menuError(''); hostCreate(); });
   tap($('btn-join'), openJoin);
   tap($('btn-join-go'), () => { menuError(''); clientJoin(codeInput.value); });
@@ -3066,6 +3182,7 @@
     if (e.target instanceof HTMLInputElement) return;
     const c = e.code;
     if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Space'].includes(c)) e.preventDefault();
+    if (HGUI.open) { if (HGUI.key(e)) e.preventDefault(); return; } // Hangar / Logros: tienen sus propias teclas
     if (e.repeat) { input.keys.add(c); return; }
     input.keys.add(c);
     const st = G.state;
@@ -3183,7 +3300,28 @@
     G.stats.workMs = (G.stats.workMs || wk) * 0.95 + wk * 0.05;
     if (G.state === 'play') G.stats.maxWorkMs = Math.max(G.stats.maxWorkMs || 0, wk);
   }
+  window.__hgLayout = (v) => HGUI.layout(v);
+  HGUI.layout(view);
   setState('menu');
+  if (PERFIL.warning) toast(PERFIL.warning);
+  // ---- aviso de novedades: una sola vez por versión, al entrar (no con ?perfil=off ni con link de invitación) ----
+  (function novedades() {
+    const NOV_VER = '5.1', KEY = 'neonDodge.novedades', el = $('novedades');
+    const q = new URLSearchParams(location.search);
+    if (!el || !PERFIL.active || q.get('novedades') === 'off' || salaParam) return;
+    try { if (localStorage.getItem(KEY) === NOV_VER) return; } catch (e) { /* sin almacenamiento: se muestra igual */ }
+    const close = () => {
+      if (el.classList.contains('hidden')) return;
+      el.classList.add('hidden');
+      try { localStorage.setItem(KEY, NOV_VER); } catch (e) { /* modo privado */ }
+      window.removeEventListener('keydown', onKey, true);
+    };
+    function onKey(e) { e.preventDefault(); e.stopPropagation(); close(); }
+    el.classList.remove('hidden');
+    window.addEventListener('keydown', onKey, true);
+    el.addEventListener('pointerdown', (e) => { e.preventDefault(); close(); });
+    $('nov-ok').addEventListener('click', close);
+  })();
   if (salaParam) {
     codeInput.value = salaParam;
     showMenuSection('join');
@@ -3195,13 +3333,14 @@
 
   // Ganchos para pruebas automáticas / consola (no afectan el juego normal)
   window.NeonDodge = {
-    G, NET, C, view, startGame, startBoss, toMenu, togglePause, hostStart,
+    G, NET, C, view, startGame, startBoss, toMenu, togglePause, hostStart, PERFIL, HG, HGUI, openHangar, makePlayer,
     setGod(v) { G.god = !!v; },
     get state() { return G.state; },
     get mode() { return NET.mode; },
     info() {
       return { mode: NET.mode, state: G.state, myId: NET.myId, code: NET.code, roster: NET.roster.map((r) => [r.id, r.name]),
         players: G.players.map((p) => ({ id: p.id, name: p.name, x: r1(p.x), y: r1(p.y), hp: p.hp, lives: p.lives, out: !!p.out,
+          armor: p.armor, maxLives: p.maxLives, shield: !!p.shield, speed: p.speed,
           weapon: p.weapon, respawn: r1(p.respawn), invuln: r1(p.invuln), away: p.away })),
         map: MAP.id, myWeapon: G.myWeapon, hudWeapon: G.hudWeapon, hudRpg: G.hudRpg, mines: G.mines.length, missiles: G.missiles.length,
         ab: G.boss && G.boss.ab ? G.boss.ab.k : 0, waves: G.boss ? (G.boss.waves || []).length : 0, overMsg: G.overMsg,

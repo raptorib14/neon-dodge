@@ -38,6 +38,10 @@
           <button id="btn-host" type="button" class="mid">CREAR PARTIDA</button>
           <button id="btn-join" type="button" class="mid">UNIRSE CON CÓDIGO</button>
         </div>
+        <div class="row">
+          <button id="btn-hangar" type="button" class="mid hg-btn">HANGAR <span id="menu-luces">0 ✦</span></button>
+          <button id="btn-logros" type="button" class="mid lg-btn">LOGROS <span id="menu-logros">0/15</span></button>
+        </div>
         <div class="best">Récord: <span id="best">0</span></div>
       </div>
       <div id="menu-join" class="hidden">
@@ -54,7 +58,8 @@
           botón ARMA (arriba del de disparo) = cambiar de arma</p>
         <p class="mouse-only"><b>Compu:</b> WASD / flechas = mover · clic (izq. o der.) = disparar a la mira ·
           1 / 2 / 3, rueda del mouse o Q = cambiar de arma</p>
-        <p><b>Armas:</b> 1 Pistola · 2 Ametralladora · 3 RPG (explota en área). <b>Vidas:</b> tenés 5 ♥.</p>
+        <p><b>Armas:</b> 1 Pistola · 2 Ametralladora · 3 RPG (explota en área). <b>Vidas:</b> tenés 5 ♥ (hasta 7 con el Hangar).</p>
+        <p class="yellow"><b>Hangar ✦:</b> ganás Luces al jugar y con los logros; gastalas en armaduras, mejoras y licencias de armas. Se guarda en este navegador.</p>
         <p>P / ENTER / ESPACIO = pausa · R = reiniciar · ESC = menú</p>
         <p class="cyan"><b>Con amigos (2 a 4):</b> uno toca CREAR PARTIDA y les pasa el código o el link; los demás tocan
           UNIRSE. Sirve desde cualquier red, en compu, celu o iPad. En multijugador solo el host puede pausar.</p>
@@ -127,15 +132,69 @@
       <h2 id="end-title">GAME OVER</h2>
       <p id="end-stats"></p>
       <p id="end-record" class="yellow"></p>
+      <p id="end-luces" class="yellow hidden"></p>
       <p id="end-msg" class="status hidden"></p>
       <button id="btn-retry" type="button" class="big">REINTENTAR</button>
       <button id="btn-end-menu" type="button">Menú</button>
     </div>
   </div>
 
+
+  <div id="hangar" class="overlay hg hidden">
+    <div class="panel hg-panel">
+      <div class="hg-head"><h2>HANGAR</h2><div id="hg-luces" class="hg-luces" title="Luces">0 ✦</div></div>
+      <p id="hg-warn" class="hg-warn hidden"></p>
+      <div class="hg-tabs">
+        <button type="button" data-tab="armas">ARMAS</button>
+        <button type="button" data-tab="armaduras" class="on">ARMADURAS</button>
+        <button type="button" data-tab="mejoras">MEJORAS</button>
+      </div>
+      <div class="hg-body">
+        <ul id="hg-list" class="hg-list"></ul>
+        <div class="hg-mid"><canvas id="hg-ship" aria-label="Tu nave"></canvas></div>
+        <div class="hg-side">
+          <div id="hg-stats" class="hg-stats"></div>
+          <div id="hg-detail" class="hg-detail"></div>
+        </div>
+      </div>
+      <div class="hg-foot">
+        <button id="hg-back" type="button">VOLVER</button>
+        <button id="hg-logros" type="button" class="gold">LOGROS</button>
+      </div>
+      <p class="hg-help touch-hide">↑/↓ lista · ←/→ slot · Enter comprar/equipar · Tab pestaña · L logros · Esc volver</p>
+    </div>
+  </div>
+
+  <div id="logros" class="overlay hg hidden">
+    <div class="panel hg-panel lg-panel">
+      <div class="hg-head"><h2 class="gold-h">LOGROS</h2><div id="lg-luces" class="hg-luces gold">0/15</div></div>
+      <div id="lg-grid" class="lg-grid"></div>
+      <div id="lg-detail" class="lg-detail"></div>
+      <div class="hg-foot"><button id="lg-back" type="button">VOLVER</button></div>
+    </div>
+  </div>
+
+  <div id="ach-toasts" aria-live="polite"></div>
+
+  <div id="novedades" class="overlay hg hidden" role="dialog" aria-labelledby="nov-title">
+    <div class="panel small nov-panel">
+      <h2 id="nov-title" class="gold-h">¡NOVEDADES!</h2>
+      <ul class="nov-list">
+        <li><b>Hangar:</b> armá tu nave con <b>armas</b>, <b>armaduras</b> y <b>mejoras</b>, y sumá <b>vidas extra</b>.</li>
+        <li><b>Luces ✦:</b> las ganás al jugar y las gastás en el Hangar.</li>
+        <li><b>Logros:</b> te avisan en pantalla cuando desbloqueás uno.</li>
+      </ul>
+      <p class="nov-note">Se guarda en este navegador. Probalo desde el menú: <b>HANGAR</b> y <b>LOGROS</b>.</p>
+      <button id="nov-ok" type="button" class="big">¡DALE!</button>
+    </div>
+  </div>
+
   <div id="toast" class="hidden" role="status"></div>
 
   <script src="peerjs.min.js"></script>
+  <script src="hangar-art.js"></script>
+  <script src="hangar-core.js"></script>
+  <script src="hangar-ui.js"></script>
   <script src="game.js"></script>
 </body>
 </html>
