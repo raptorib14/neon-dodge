@@ -360,3 +360,13 @@ h2.gold-h { color: #ffd54a; text-shadow: 0 0 10px #ffd54a, 0 0 26px rgba(255, 21
 .nov-list li { margin-bottom: 6px; }
 .nov-list b { color: #00f0ff; }
 .nov-note { margin: 0 0 14px; font-size: 0.9em; opacity: 0.8; text-align: center; }
+
+/* v5.1 web · códigos de Luces (caja en el Hangar) */
+.hg-code-btn { font-size: 12px; opacity: .75; padding: 6px 12px; }
+.hg-code { position: fixed; inset: 0; display: flex; align-items: center; justify-content: center; background: rgba(4, 6, 16, .78); z-index: 70; }
+.hg-code.hidden { display: none; }
+.hg-code-box { width: min(360px, 90%); background: #0b1024; border: 1px solid #00f0ff; border-radius: 10px; padding: 16px; box-shadow: 0 0 24px rgba(0, 240, 255, .35); text-align: center; }
+.hg-code-box h3 { margin: 0 0 10px; color: #ffdc3c; letter-spacing: 2px; font-size: 16px; }
+#hg-code-input { width: 100%; box-sizing: border-box; font: 18px monospace; padding: 10px; text-transform: uppercase; letter-spacing: 2px; text-align: center; background: #050816; color: #fff; border: 1px solid #3a4a7a; border-radius: 6px; }
+.hg-code-row { display: flex; gap: 10px; justify-content: center; margin-top: 8px; }
+#hg-code-msg { min-height: 1.3em; margin: 8px 0 0; }

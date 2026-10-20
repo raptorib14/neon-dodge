@@ -160,8 +160,17 @@
       <div class="hg-foot">
         <button id="hg-back" type="button">VOLVER</button>
         <button id="hg-logros" type="button" class="gold">LOGROS</button>
+        <button id="hg-code-btn" type="button" class="hg-code-btn" title="Canjear un código (C)">CÓDIGO</button>
       </div>
-      <p class="hg-help touch-hide">↑/↓ lista · ←/→ slot · Enter comprar/equipar · Tab pestaña · L logros · Esc volver</p>
+      <p class="hg-help touch-hide">↑/↓ lista · ←/→ slot · Enter comprar/equipar · Tab pestaña · L logros · C código · Esc volver</p>
+      <div id="hg-code" class="hg-code hidden" role="dialog" aria-labelledby="hg-code-title">
+        <form id="hg-code-form" class="hg-code-box" autocomplete="off">
+          <h3 id="hg-code-title">CANJEAR CÓDIGO</h3>
+          <input id="hg-code-input" type="text" inputmode="text" autocapitalize="characters" autocorrect="off" spellcheck="false" autocomplete="off" maxlength="24" enterkeyhint="done" placeholder="Escribí el código" aria-label="Código">
+          <p id="hg-code-msg" class="hg-msg" aria-live="polite"></p>
+          <div class="hg-code-row"><button id="hg-code-cancel" type="button">CERRAR</button><button id="hg-code-ok" type="submit" class="gold">CANJEAR</button></div>
+        </form>
+      </div>
     </div>
   </div>
 

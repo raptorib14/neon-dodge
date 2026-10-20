@@ -99,9 +99,51 @@
     return lvl > 0 && lvl <= m.niveles.length ? m.niveles[lvl - 1].valor : m.base;
   }
 
+
+  // ---- Códigos secretos de Luces ✦ (como la compu): solo hashes sha256("<sal>" + CÓDIGO normalizado), una vez por perfil.
+  // Solo suman a la billetera local: no tocan la red ni el protocolo.
+  const CODIGO_SAL = 'neon-dodge-luces-v1:', CODIGO_MAX_LEN = 16;
+  const CODIGOS_LUCES = {
+    d9f94c8fb5fbedfd5bd1970e7f1b101c834d8fb95783504e407369e910e553d4: ['Primera chispa', 50],
+    '7098ab235da5cd71a20758f3dc5fc5ba4c00ac38d242849442114ed3f8410957': ['Órbita baja', 100],
+    '99541fb8adba92950890f90f52feade2010e84431d6ebf4e24eee116abe2aecd': ['Escuadrón Halcón', 250],
+    '8f79dbe8e78d097133c7662b48c45324c361993f6ee4b7b1d9a7fbc2a054805d': ['Luz de la Grieta', 500],
+    '0d712422e58a25650fdf22639b1726a8fdbcbb0827e9283b7461385f4aeffb82': ['Taller de Mecha', 1000],
+  };
+  function codigoNorm(t) { return String(t == null ? '' : t).toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, CODIGO_MAX_LEN); }
+  // SHA-256 en JS puro (sincrónico; anda también por http:// en la red local, donde crypto.subtle no existe)
+  function sha256(str) {
+    const b = unescape(encodeURIComponent(str)), K = [], Hh = [];
+    let n = 2, c = 0;
+    const isP = (x) => { for (let d = 2; d * d <= x; d++) if (x % d === 0) return false; return true; };
+    const fr = (x) => ((x - Math.floor(x)) * 4294967296) | 0;
+    while (c < 64) { if (isP(n)) { if (c < 8) Hh[c] = fr(Math.pow(n, 1 / 2)); K[c++] = fr(Math.pow(n, 1 / 3)); } n++; }
+    const bytes = []; for (let i = 0; i < b.length; i++) bytes.push(b.charCodeAt(i));
+    const bl = bytes.length * 8; bytes.push(0x80); while (bytes.length % 64 !== 56) bytes.push(0);
+    for (let i = 7; i >= 0; i--) bytes.push(i >= 4 ? 0 : (bl >>> (i * 8)) & 255);
+    const r = (x, k) => (x >>> k) | (x << (32 - k)), w = new Array(64);
+    for (let o = 0; o < bytes.length; o += 64) {
+      for (let i = 0; i < 16; i++) w[i] = (bytes[o + 4 * i] << 24) | (bytes[o + 4 * i + 1] << 16) | (bytes[o + 4 * i + 2] << 8) | bytes[o + 4 * i + 3];
+      for (let i = 16; i < 64; i++) {
+        const s0 = r(w[i - 15], 7) ^ r(w[i - 15], 18) ^ (w[i - 15] >>> 3), s1 = r(w[i - 2], 17) ^ r(w[i - 2], 19) ^ (w[i - 2] >>> 10);
+        w[i] = (w[i - 16] + s0 + w[i - 7] + s1) | 0;
+      }
+      let [a, bb, cc, d, e, f, g, h] = Hh;
+      for (let i = 0; i < 64; i++) {
+        const t1 = (h + (r(e, 6) ^ r(e, 11) ^ r(e, 25)) + ((e & f) ^ (~e & g)) + K[i] + w[i]) | 0;
+        const t2 = ((r(a, 2) ^ r(a, 13) ^ r(a, 22)) + ((a & bb) ^ (a & cc) ^ (bb & cc))) | 0;
+        h = g; g = f; f = e; e = (d + t1) | 0; d = cc; cc = bb; bb = a; a = (t1 + t2) | 0;
+      }
+      Hh[0] = (Hh[0] + a) | 0; Hh[1] = (Hh[1] + bb) | 0; Hh[2] = (Hh[2] + cc) | 0; Hh[3] = (Hh[3] + d) | 0;
+      Hh[4] = (Hh[4] + e) | 0; Hh[5] = (Hh[5] + f) | 0; Hh[6] = (Hh[6] + g) | 0; Hh[7] = (Hh[7] + h) | 0;
+    }
+    return Hh.map((x) => (x >>> 0).toString(16).padStart(8, '0')).join('');
+  }
+  function codigoHash(t) { return sha256(CODIGO_SAL + codigoNorm(t)); }
+
   function perfilNew() {
     return { version: 1, luces: 0, mejoras: {}, licencias: [], armaduras: ['sin_armadura'], armadura: 'sin_armadura', arma_inicial: 'pistola',
-      logros: {}, logros_nuevos: [], contadores: { apagados: 0, apagados_rpg: 0 }, armaduras_usadas: [], luces_ganadas_total: 0 };
+      logros: {}, logros_nuevos: [], contadores: { apagados: 0, apagados_rpg: 0 }, armaduras_usadas: [], luces_ganadas_total: 0, codigos: [] };
   }
 
   // Lo desconocido se ignora, lo que falta se completa, los números se acotan (igual que la compu).
@@ -128,6 +170,7 @@
     if (d.contadores && typeof d.contadores === 'object') {
       for (const k of Object.keys(out.contadores)) out.contadores[k] = Math.floor(num(d.contadores[k], 0, 0, 1e9));
     }
+    if (Array.isArray(d.codigos)) out.codigos = [...new Set(d.codigos.map(String).filter((h) => h in CODIGOS_LUCES))]; // perfiles viejos: sin campo = []
     return out;
   }
 
@@ -333,6 +376,19 @@
     };
     P.markLogrosSeen = function () { if (P.data.logros_nuevos.length) { P.data.logros_nuevos = []; P.save(); } };
     P.count = () => Object.keys(P.data.logros).length;
+    // canjear un código secreto (mismos mensajes que la compu)
+    P.canjearCodigo = function (text) {
+      if (!P.active) return { ok: false, msg: 'Sin perfil (?perfil=off): los códigos no hacen nada.' };
+      const code = codigoNorm(text);
+      if (!code) return { ok: false, msg: 'Escribí un código.' };
+      const h = codigoHash(code), info = CODIGOS_LUCES[h];
+      if (!info) return { ok: false, msg: 'Código inválido.' };
+      if (P.data.codigos.includes(h)) return { ok: false, msg: `Ese código ya lo canjeaste (${info[0]}).` };
+      P.data.codigos.push(h);
+      P.data.luces = Math.min(1e7, P.data.luces + info[1]);
+      if (!P.save()) return { ok: true, msg: `¡Código canjeado: ${info[0]}! +${info[1]} ✦ (no se pudo guardar el perfil)` };
+      return { ok: true, msg: `¡Código canjeado: ${info[0]}! +${info[1]} ✦` };
+    };
     P.load();
     return P;
   }
@@ -341,5 +397,6 @@
     WEAPON_IDS, WEAPON_NAMES, WEAPON_DESC, LICENSE_COST, LIVES_BASE, LIVES_EXTRA_MAX, ROUND_LUCES_MAX, MG_SPREAD_DEG, RPG_RADIUS, STORAGE_KEY,
     MEJORAS, MEJORA_BY_ID, ARMORS, ARMOR_IDS, LOGROS, LOGRO_IDS, LOGRO_PREMIO, REMOTE_LOGROS,
     mejoraValue, perfilNew, perfilSanitize, loadoutSanitize, loadoutEffects, shipStats, roundLuces, createPerfil,
+    CODIGO_MAX_LEN, codigoNorm, codigoHash, sha256,
   };
 });

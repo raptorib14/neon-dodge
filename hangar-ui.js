@@ -340,6 +340,7 @@
       layout();
     }
     function hide() {
+      if (S.code) codeClose();
       S.open = null;
       el.hg.classList.add('hidden'); el.lg.classList.add('hidden');
       layout();
@@ -356,9 +357,36 @@
       e.preventDefault(); S.tab = b.dataset.tab; S.sel = 0; S.msg = ''; renderAll();
     }));
 
+    // ---- caja CÓDIGO (input real: en celu/iPad sale el teclado) ----
+    const codeEl = $('hg-code'), codeIn = $('hg-code-input'), codeMsg = $('hg-code-msg');
+    function codeOpen() {
+      if (S.open !== 'hangar') return;
+      S.code = true; codeEl.classList.remove('hidden');
+      codeIn.value = '';
+      const off = !perfil.active;
+      codeMsg.textContent = off ? 'Sin perfil (?perfil=off): los códigos no hacen nada.' : ''; codeMsg.className = 'hg-msg ' + (off ? 'bad' : '');
+      setTimeout(() => { try { codeIn.focus(); } catch (e) { /* nada */ } }, 0);
+    }
+    function codeClose() { S.code = false; codeEl.classList.add('hidden'); try { codeIn.blur(); } catch (e) { /* nada */ } }
+    function codeSubmit() {
+      const r = perfil.canjearCodigo(codeIn.value);
+      codeMsg.textContent = r.msg; codeMsg.className = 'hg-msg ' + (r.ok ? 'ok' : 'bad');
+      if (r.ok) { codeIn.value = ''; renderAll(); }
+      return r;
+    }
+    $('hg-code-btn').addEventListener('click', (e) => { e.preventDefault(); codeOpen(); });
+    $('hg-code-cancel').addEventListener('click', (e) => { e.preventDefault(); codeClose(); });
+    $('hg-code-form').addEventListener('submit', (e) => { e.preventDefault(); codeSubmit(); });
+    codeEl.addEventListener('click', (e) => { if (e.target === codeEl) codeClose(); });
+    codeIn.addEventListener('keydown', (e) => { if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); codeClose(); } });
+
     function key(e) { // devuelve true si lo usó
       if (!S.open) return false;
       const c = e.code;
+      if (S.code) { // con la caja abierta, las teclas son para escribir (solo Esc la cierra; Enter lo maneja el formulario)
+        if (c === 'Escape') { codeClose(); return true; }
+        return false;
+      }
       if (S.open === 'hangar') {
         const n = items().length;
         if (c === 'ArrowDown') S.sel = (S.sel + 1) % n;
@@ -368,6 +396,7 @@
           if (S.tab !== 'armas') { S.tab = 'armas'; S.sel = 0; } else if (c === 'ArrowRight' && S.sel === 2) { S.tab = 'armaduras'; S.sel = 0; } else S.sel = (S.sel + (c === 'ArrowRight' ? 1 : 2)) % 3;
         } else if (c === 'Enter' || c === 'NumpadEnter') { act(); return true; }
         else if (c === 'KeyL') { opts.onShow('logros', 'hangar'); return true; }
+        else if (c === 'KeyC') { codeOpen(); return true; }
         else if (c === 'Escape') { back(); return true; }
         else return true;
         S.msg = ''; renderAll();
@@ -428,7 +457,7 @@
     }
 
     renderLuces();
-    return { show, hide, key, pushToast, layout, renderAll, items, act, state: S, get open() { return S.open; } };
+    return { show, hide, key, pushToast, layout, renderAll, items, act, codeOpen, codeClose, codeSubmit, state: S, get open() { return S.open; } };
   }
 
   window.NeonHangarUI = { create };
