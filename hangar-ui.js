@@ -11,7 +11,7 @@
   const TABS = ['armas', 'armaduras', 'mejoras'];
   const TAB_NAMES = { armas: 'ARMAS', armaduras: 'ARMADURAS', mejoras: 'MEJORAS' };
   const STAT_NAMES = { blindaje: 'BLINDAJE', velocidad: 'VELOCIDAD', dano: 'DAÑO', cadencia: 'CADENCIA' };
-  const CAT_NAMES = { combate: 'combate', jefes: 'jefes', armas: 'armas', cooperativo: 'cooperativo', hangar: 'hangar' };
+  const CAT_NAMES = { combate: 'combate', jefes: 'jefes', armas: 'armas', cooperativo: 'cooperativo', hangar: 'hangar', campania: 'campaña' };
   const NIVEL_NAMES = { bronce: 'bronce', plata: 'plata', oro: 'oro', secreto: 'secreto' };
 
   function create(opts) {

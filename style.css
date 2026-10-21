@@ -370,3 +370,26 @@ h2.gold-h { color: #ffd54a; text-shadow: 0 0 10px #ffd54a, 0 0 26px rgba(255, 21
 #hg-code-input { width: 100%; box-sizing: border-box; font: 18px monospace; padding: 10px; text-transform: uppercase; letter-spacing: 2px; text-align: center; background: #050816; color: #fff; border: 1px solid #3a4a7a; border-radius: 6px; }
 .hg-code-row { display: flex; gap: 10px; justify-content: center; margin-top: 8px; }
 #hg-code-msg { min-height: 1.3em; margin: 8px 0 0; }
+
+/* ---- v5.2 Campaña ---- */
+.camp-btn { background: rgba(255,120,220,.12); border-color: #ff78dc; color: #ffd0f2; }
+.camp-panel { max-width: 760px; width: calc(100vw - 24px); max-height: calc(100dvh - 24px); overflow-y: auto; }
+.camp-head { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; flex-wrap: wrap; }
+.camp-slots, .camp-levels, .camp-taller, .camp-acts { display: grid; gap: 8px; margin: 10px 0; }
+.camp-slots { grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); }
+.camp-slot { border: 1px solid #2b3a5a; border-radius: 10px; padding: 10px; background: rgba(10,16,32,.7); }
+.camp-slot-h { font-weight: bold; color: #00f0ff; margin-bottom: 4px; }
+.camp-acts { grid-template-columns: repeat(auto-fit, minmax(110px, 1fr)); }
+.camp-levels { grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); }
+.camp-levels button, .camp-acts button, .camp-taller button { min-height: 44px; }
+.locked, button.locked { opacity: .4; }
+.camp-detail, .camp-bonus { margin: 8px 0; color: #b8c4e0; font-size: 14px; }
+.camp-dialog { display: flex; gap: 12px; align-items: flex-start; min-height: 120px; }
+.camp-portrait { flex: 0 0 64px; height: 64px; border-radius: 50%; border: 3px solid var(--pc, #00f0ff); box-shadow: 0 0 14px var(--pc, #00f0ff); display: flex; align-items: center; justify-content: center; font-weight: bold; color: var(--pc, #00f0ff); font-size: 26px; }
+.camp-who { font-weight: bold; color: var(--pc, #00f0ff); }
+.camp-dtext { margin-top: 4px; line-height: 1.4; }
+.camp-card { text-align: center; padding: 28px 8px; }
+.camp-card-n { font-size: 14px; letter-spacing: 4px; color: #ff78dc; }
+.camp-taller { grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); }
+.overlay.camp { z-index: 30; }
+.camp-panel ul { list-style: none; padding: 0; margin: 6px 0; }

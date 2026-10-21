@@ -68,6 +68,13 @@
   }
   const TAU_ = Math.PI * 2;
 
+  // v5.2 web: logros de la campaña (glifos del arte de la compu: campania_acto e impulso)
+  DATA.glifo.campania_acto = [{"tipo": "poligono", "puntos": [[0.0, -0.5], [0.129, -0.178], [0.476, -0.155], [0.209, 0.068], [0.294, 0.405], [0.0, 0.22], [-0.294, 0.405], [-0.209, 0.068], [-0.476, -0.155], [-0.129, -0.178]], "relleno": "aliado*0.3", "trazo": "aliado", "ancho": 2}];
+  DATA.glifo.impulso = [{"tipo": "linea", "desde": [-0.5, -0.35], "hasta": [-0.1, 0], "trazo": "jugador", "ancho": 3}, {"tipo": "linea", "desde": [-0.1, 0], "hasta": [-0.5, 0.35], "trazo": "jugador", "ancho": 3}, {"tipo": "linea", "desde": [0.05, -0.35], "hasta": [0.45, 0], "trazo": "blanco", "ancho": 3}, {"tipo": "linea", "desde": [0.45, 0], "hasta": [0.05, 0.35], "trazo": "blanco", "ancho": 3}];
+  DATA.logro.campania_acto1 = { cat: 'campania', nivel: 'bronce', glifo: 'campania_acto', texto: '1' };
+  DATA.logro.campania_acto2 = { cat: 'campania', nivel: 'bronce', glifo: 'campania_acto', texto: '2' };
+  DATA.logro.esquiva_neon = { cat: 'combate', nivel: 'plata', glifo: 'impulso' };
+
   // Ícono de logro: marco del nivel + glifo + pestaña de categoría. state: 'on' | 'off' | 'new'
   function drawAchievement(ctx, id, cx, cy, r, state, t) {
     const info = DATA.logro[id];
@@ -86,6 +93,10 @@
     drawLayers(ctx, DATA.marcos[nivel], cx, cy, r, 0, t, { all });
     const gl = locked ? (secret ? 'interrogacion' : 'candado') : info.glifo;
     drawLayers(ctx, DATA.glifo[gl] || [], cx, cy, r, 0, t, { all });
+    if (!locked && info.texto) { // número del acto sobre la estrella
+      ctx.save(); ctx.fillStyle = css(colorOf('blanco')); ctx.font = `bold ${Math.round(r * 0.42)}px monospace`;
+      ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText(info.texto, cx, cy + r * 0.02); ctx.restore();
+    }
     const catC = colorOf(DATA.cat[info.cat] || 'jugador'); // pestaña de categoría (arco de 50° a radio 1,18)
     ctx.save();
     ctx.strokeStyle = css(locked ? colorOf('tenue*0.45') : catC); ctx.lineWidth = 3; ctx.lineCap = 'round';

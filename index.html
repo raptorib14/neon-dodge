@@ -34,6 +34,7 @@
         <div class="code-label">Elegí el mapa</div>
         <div id="map-pick" class="maps"></div>
         <button id="btn-play" type="button" class="big">JUGAR SOLO</button>
+        <button id="btn-campania" type="button" class="big camp-btn">CAMPAÑA</button>
         <div class="row">
           <button id="btn-host" type="button" class="mid">CREAR PARTIDA</button>
           <button id="btn-join" type="button" class="mid">UNIRSE CON CÓDIGO</button>
@@ -183,6 +184,10 @@
     </div>
   </div>
 
+  <div id="camp" class="overlay camp hidden">
+    <div class="panel camp-panel"><div id="camp-body"></div></div>
+  </div>
+
   <div id="ach-toasts" aria-live="polite"></div>
 
   <div id="novedades" class="overlay hg hidden" role="dialog" aria-labelledby="nov-title">
@@ -191,6 +196,7 @@
       <ul class="nov-list">
         <li><b>Hangar:</b> armá tu nave con <b>armas</b>, <b>armaduras</b> y <b>mejoras</b>, y sumá <b>vidas extra</b>.</li>
         <li><b>Luces ✦:</b> las ganás al jugar y las gastás en el Hangar.</li>
+        <li><b>Campaña:</b> Acto 1 «Chispas» y Acto 2 «Los Halcones», con 3 ranuras de guardado y el Taller.</li>
         <li><b>Logros:</b> te avisan en pantalla cuando desbloqueás uno.</li>
       </ul>
       <p class="nov-note">Se guarda en este navegador. Probalo desde el menú: <b>HANGAR</b> y <b>LOGROS</b>.</p>
@@ -204,6 +210,7 @@
   <script src="hangar-art.js"></script>
   <script src="hangar-core.js"></script>
   <script src="hangar-ui.js"></script>
+  <script src="campania-data.js"></script>
   <script src="game.js"></script>
 </body>
 </html>

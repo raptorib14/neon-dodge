@@ -288,7 +288,9 @@
     return o.tipo === 'rect' ? { t: 'rect', x: o.x * W, y: o.y * H, w: o.w * W, h: o.h * H }
       : { t: 'circle', x: o.x * W, y: o.y * H, r: o.r * MIN_WH };
   }
-  const MAPS = MAPAS_JSON.mapas.map((m) => {
+  // v5.2 web: los mapas de la campaña (campania1.json) van al final: el selector y el online siguen con los 3 de siempre
+  const CAMP_MAPAS = ((window.NeonCampaniaData || {}).mapas || []).filter((m) => !MAPAS_JSON.mapas.some((x) => x.id === m.id));
+  const MAPS = MAPAS_JSON.mapas.concat(CAMP_MAPAS.map((m) => Object.assign({ camp: true }, m))).map((m) => {
     const pal = m.paleta, principal = hex(pal.principal);
     const portals = [];
     for (const pp of m.portales || []) {
@@ -297,7 +299,7 @@
       portals.push({ c: hex(pp.color), cooldown: pp.cooldown_s, ends: [end(e1), end(e2)] });
     }
     return {
-      id: m.id, nombre: m.nombre,
+      id: m.id, nombre: m.nombre, camp: !!m.camp,
       bg: hex(pal.fondo), gridV: hex(pal.grilla), gridH: hex(pal.grilla_horizontal || pal.grilla),
       principal, acento: hex(pal.acento),
       star: m.id === 'arena_neon' ? [110, 150, 255] : principal, // Arena Neón: igual que la v3
@@ -375,7 +377,7 @@
     if (typeof G !== 'undefined') G.mapIdx = MAPS.indexOf(MAP);
     if (save) lsSet(LS_MAP, MAP.id);
   }
-  const prefMap = () => lsGet(LS_MAP, 'arena_neon');
+  const prefMap = () => { const id = lsGet(LS_MAP, 'arena_neon'); return MAPS.some((m) => m.id === id && !m.camp) ? id : 'arena_neon'; };
 
   function drawMapGeometry() {
     if (MAP.obstacles.length) {
@@ -612,6 +614,7 @@
     startAb(k, banner, a = 0, b = 0, c = 0) {
       this.ab = { k, t: WARN[k] || 0, a, b, c };
       logAbility(this.name + ':aviso' + k);
+      if (G.camp) G.camp.onAbility(this, k);
       if (banner) G.showBanner(banner, this.color, Math.max(1.2, WARN[k] + 0.4));
     }
     damage(n) {
@@ -1157,6 +1160,7 @@
     name: cleanName(lsGet(LS_NAME, 'Jugador')),
     best: parseInt(lsGet(LS_BEST, '0'), 10) || 0,
     god: false,
+    camp: null, // CampRun mientras se juega un nivel de la campaña
     fps: 60,
     mapIdx: 0,
     stats: { frames: 0, playFrames: 0, bossFrames: 0, shots: 0, kills: 0, bossesKilled: 0, maxParticles: 0,
@@ -1347,6 +1351,7 @@
     G.boss = null;
     G.nextBossIdx = boss.index + 1;
     G.bossCooldown = 8.0;
+    if (G.camp) { G.showBanner(`${boss.name} DERROTADO`, boss.color, 2.0); G.camp.onBossKilled(boss); return; }
     if (boss.index === BOSS_TYPES.length - 1) {
       G.winTimer = 2.4;
       G.showBanner('¡JEFE FINAL DERROTADO!', YELLOW, 2.4);
@@ -1369,7 +1374,7 @@
     ach(p.id, 'logro:' + id);
   }
 
-  function killEnemy(e, byPlayer, owner, rpg) {
+  function killEnemy(e, byPlayer, owner, rpg, noDrop) {
     if (!e.alive) return;
     e.alive = false;
     const col = ENEMY_COLOR[e.kind];
@@ -1380,8 +1385,9 @@
       G.score += pts;
       G.stats.kills++;
       G.popup(e.x, e.y - 10, `+${pts}`, col);
-      if (owner !== undefined) { ach(owner, 'kill'); if (rpg) ach(owner, 'kill_rpg'); }
-      if (Math.random() < 0.05) spawnPowerup(e.x, e.y);
+      if (owner !== undefined && owner >= 0) { ach(owner, 'kill'); if (rpg) ach(owner, 'kill_rpg'); }
+      if (G.camp) G.camp.onKill(e);
+      if (!noDrop && Math.random() < 0.05) spawnPowerup(e.x, e.y);
     }
   }
   function killMine(m, byPlayer) {
@@ -1400,6 +1406,7 @@
 
   function gameOver() {
     if (G.state !== 'play') return; // una sola vez (3.11)
+    if (G.camp) { campFail(campTxt('fallo_vidas')); return; } // campaña: reintentar desde el checkpoint
     G.stats.overs++;
     G.overMsg = G.players.length > 1 ? TXT.goCoop : TXT.goSolo;
     setState('over');
@@ -1419,6 +1426,7 @@
     if (G.god) { p.invuln = 1.2; return true; } // modo dios (tests): nunca pierde vidas
     G.stats.deaths++;
     p.lostLife = true;
+    if (G.camp && p === G.player) G.camp.onLifeLost();
     p.lives = Math.max(0, p.lives - 1);
     p.hp = 0;
     p.firing = false;
@@ -1563,7 +1571,8 @@
         if (p === G.player) G.popup(p.x, p.y - 30, fmt(TXT.armaCambio, { arma: TXT.arma[p.weapon] }), WHITE);
       }
       const ox = p.x, oy = p.y;
-      stepMove(p, inp.mx, inp.my, dt);
+      if (G.camp && p === G.player) G.camp.movePlayer(p, inp, dt); // campaña: Impulso
+      else stepMove(p, inp.mx, inp.my, dt);
       if (Math.hypot(inp.ax - p.x, inp.ay - p.y) > 2) p.angle = Math.atan2(inp.ay - p.y, inp.ax - p.x);
       p.invuln = Math.max(0, p.invuln - dt);
       if (p.shieldS > 0) { p.shieldCd = Math.max(0, p.shieldCd - dt); p.shield = p.shieldCd <= 0; }
@@ -1609,8 +1618,9 @@
     for (const e of G.enemies) {
       e.angle += e.spin * dt;
       e.flash = Math.max(0, e.flash - dt);
+      const coreT = G.camp ? G.camp.enemyTarget(e) : null; // campaña: los que van al núcleo
       if (e.kind === 'hunter') {
-        const t = nearestAlive(e.x, e.y);
+        const t = coreT || nearestAlive(e.x, e.y);
         if (t) {
           const [nx, ny] = norm(t.x - e.x, t.y - e.y);
           const k = Math.min(1, 2.5 * dt);
@@ -1636,6 +1646,7 @@
         if (p.hp <= 0) continue;
         const rr = e.r + p.r;
         if ((e.x - p.x) ** 2 + (e.y - p.y) ** 2 < rr * rr) {
+          if (G.camp && G.camp.dashT > 0 && p === G.player && !e.esq) { e.esq = true; ach(p.id, 'esquiva'); } // «Esquiva neón»
           if (damagePlayer(p)) killEnemy(e, false);
           else {
             const [ax, ay] = norm(e.x - p.x, e.y - p.y);
@@ -1655,6 +1666,7 @@
       if (boss.phase === 2 && !boss.phase2Announced) {
         boss.phase2Announced = true;
         G.showBanner(boss.name === 'TITAN' ? TXT.titanFase2 : `${boss.name}: FASE 2`, boss.color, 1.6);
+        if (G.camp) G.camp.event('jefe_fase2');
         G.particles.ring(boss.x, boss.y, boss.color, 200, 0.8, 5);
         G.particles.burst(boss.x, boss.y, boss.color, 30, 260, 6);
         G.addShake(10);
@@ -1684,6 +1696,7 @@
       let hit = false;
       for (const p of G.players) {
         const rr = b.r + p.r * 0.7;
+        if (G.camp && G.camp.dashT > 0 && p === G.player && !b.esq && p.hp > 0 && (b.x - p.x) ** 2 + (b.y - p.y) ** 2 < rr * rr) { b.esq = true; ach(p.id, 'esquiva'); }
         if (p.hp > 0 && (b.x - p.x) ** 2 + (b.y - p.y) ** 2 < rr * rr && damagePlayer(p)) { hit = true; break; }
       }
       if (hit) { if (NET.rec) NET.ev.push(['x', b.id]); continue; }
@@ -1715,15 +1728,18 @@
       }
       else if (u.kind === 'magnet') { taker.magnet = 6 * taker.pu; G.popup(u.x, u.y, 'IMÁN', CYAN); }
       else if (u.kind === 'rapid') { taker.rapid = 6 * taker.pu; G.popup(u.x, u.y, 'DISPARO RÁPIDO', ORANGE); }
-      else { G.score += SCORE_POWERUP; G.popup(u.x, u.y, `+${SCORE_POWERUP}`, YELLOW); }
+      else { G.score += SCORE_POWERUP; G.popup(u.x, u.y, `+${SCORE_POWERUP}`, YELLOW); if (G.camp) { G.camp.lucesExtra += 2; G.popup(u.x, u.y + 22, '+2 ✦', YELLOW); } }
     }
 
-    if (G.score >= 220) for (const p of G.players) if (!p.lostLife) achOnce(p, 'intocable'); // 220 puntos sin perder una vida
+    if (G.score >= 220 && !G.camp) for (const p of G.players) if (!p.lostLife) achOnce(p, 'intocable'); // 220 puntos sin perder una vida
 
     // puntaje por supervivencia: +1 por segundo
     G.elapsed += dt;
     G.survivalAcc += dt;
     while (G.survivalAcc >= 1) { G.survivalAcc -= 1; G.score += 1; }
+
+    // campaña: el nivel reemplaza los jefes por puntaje y las oleadas
+    if (G.camp) { G.camp.tick(dt); return; }
 
     // ?debug_boss=N (solo para pruebas): fuerza el jefe N al ratito de empezar
     if (G.debugBossT > 0) {
@@ -2548,13 +2564,18 @@
     hasTouch: navigator.maxTouchPoints > 0 || 'ontouchstart' in window,
     move: null, // {id, ox, oy, x, y} en coordenadas de pantalla (CSS px)
     fire: null,
-    wTap: 0, wheelT: 0,
+    wTap: 0, wheelT: 0, dTap: 0, dashHeld: false,
   };
   // arma que tengo en la mano (la mía al instante; la simulación del host la confirma)
   function myWeapon() { return G.myWeapon | 0; }
-  function switchWeapon(w) { // 1/2/3, rueda, Q o botón táctil. En pausa, en el menú o muerto no hace nada (1.27, 3.7)
+  function switchWeapon(w, step) { // 1/2/3, rueda, Q o botón táctil. En pausa, en el menú o muerto no hace nada (1.27, 3.7)
     if (G.state !== 'play' || !G.player || G.player.hp <= 0) return;
-    const nw = ((w % WEAPONS.length) + WEAPONS.length) % WEAPONS.length;
+    const L = WEAPONS.length;
+    let nw = ((w % L) + L) % L;
+    if (G.camp) { // campaña: solo las armas del nivel (la rueda / Q / el botón saltan a la siguiente que haya)
+      for (let i = 0; step && i < L && !G.camp.weapons.includes(nw); i++) nw = (((nw + step) % L) + L) % L;
+      if (!G.camp.weapons.includes(nw)) return;
+    }
     if (nw === G.myWeapon) return;
     G.myWeapon = nw;
     if (NET.mode === 'client') G.popups.push({ x: G.player.x, y: G.player.y - 30, txt: fmt(TXT.armaCambio, { arma: TXT.arma[nw] }), c: WHITE, big: false, life: 0.8, max: 0.8 });
@@ -2574,7 +2595,11 @@
     input.hasTouch = true;
     if (G.state !== 'play') return;
     const wb = weaponButton();
-    if (Math.hypot(e.clientX - wb.x, e.clientY - wb.y) < wb.r + 10) { input.wTap = performance.now(); switchWeapon(myWeapon() + 1); return; }
+    if (Math.hypot(e.clientX - wb.x, e.clientY - wb.y) < wb.r + 10) { input.wTap = performance.now(); switchWeapon(myWeapon() + 1, 1); return; }
+    if (G.camp && G.camp.mecs.has('impulso')) { // campaña: botón IMPULSO
+      const d = dashButton();
+      if (Math.hypot(e.clientX - d.x, e.clientY - d.y) < d.r + 10) { input.dTap = performance.now(); G.camp.dashReq = true; return; }
+    }
     const side = e.clientX < view.w / 2 ? 'move' : 'fire';
     if (input[side]) return;
     input[side] = { id: e.pointerId, ox: e.clientX, oy: e.clientY, x: e.clientX, y: e.clientY };
@@ -2652,7 +2677,7 @@
     let ax, ay, fireOn;
     if (input.mode === 'mouse' && !input.fire) {
       ax = input.mouse.x; ay = input.mouse.y;
-      fireOn = (input.mouse.buttons & 3) !== 0; // clic izquierdo o derecho
+      fireOn = (input.mouse.buttons & (G.camp ? 1 : 3)) !== 0; // clic izquierdo o derecho (campaña: el derecho es el Impulso)
     } else {
       const fs = input.fire;
       fireOn = !!fs;
@@ -2667,7 +2692,8 @@
       }
     }
     G.aim = [ax, ay];
-    return { mx, my, ax, ay, fire: fireOn, w: G.myWeapon };
+    const dash = !!G.camp && (k.has('ShiftLeft') || k.has('ShiftRight') || k.has('Space') || (input.mode === 'mouse' && (input.mouse.buttons & 2) !== 0));
+    return { mx, my, ax, ay, fire: fireOn, w: G.myWeapon, dash };
   }
 
   // ---------------------------------------------------------------------------
@@ -2676,6 +2702,7 @@
   function drawWorld() {
     bg.draw();
     drawMapGeometry();
+    if (G.camp) campDrawUnder();
     for (const u of G.powerups) drawPowerup(u);
     if (G.enemies.length) {
       additive(() => { for (const e of G.enemies) glow(e.x, e.y, e.r * 3, ENEMY_COLOR[e.kind], 0.65); });
@@ -2722,6 +2749,7 @@
         drawPlayer(p);
         text(p.away ? `${p.name} (ausente)` : p.name, p.x, p.y - 40, 13, p.color, { align: 'center', alpha: p.away ? 0.5 : 0.85 });
       }
+      if (G.camp) campDrawOver();
     }
     for (const t of G.popups) {
       const a = clamp(t.life / t.max * 1.5, 0, 1);
@@ -2757,9 +2785,10 @@
     // vidas como corazones (a la izquierda: arriba a la derecha están los botones de pausa/reinicio)
     const lives = p.lives === undefined ? START_LIVES : p.lives;
     for (let i = 0; i < (p.maxLives || MAX_LIVES); i++) drawHeart(24 + i * 24, 50, 9, i < lives);
-    text(`OLA ${G.wave}   JEFES ${G.bossesDefeated}/${BOSS_TYPES.length}`, 16, 68, 15, DIM);
     let ty = 88;
-    if (!G.boss && G.nextBossIdx < BOSS_TYPES.length && G.winTimer <= 0) {
+    if (G.camp) campDrawHud(68);
+    else text(`OLA ${G.wave}   JEFES ${G.bossesDefeated}/${BOSS_TYPES.length}`, 16, 68, 15, DIM);
+    if (!G.camp && !G.boss && G.nextBossIdx < BOSS_TYPES.length && G.winTimer <= 0) {
       const falta = Math.max(0, BOSS_SCORES[G.nextBossIdx] - G.score);
       text(falta === 0 ? 'JEFE ENTRANDO...' : `PRÓXIMO JEFE EN ${falta} PTS`, 16, ty, 15, PINK);
       ty += 20;
@@ -2881,6 +2910,13 @@
     ctx.strokeStyle = rgb(CYAN, 0.9); ctx.lineWidth = 2; ctx.stroke();
     text(TXT.armaBoton, b.x, b.y - 12, 10, CYAN, { align: 'center', base: 'middle', bold: true });
     text(`${myWeapon() + 1} ${['PIST', 'AMET', 'RPG'][myWeapon()]}`, b.x, b.y + 6, 12, WHITE, { align: 'center', base: 'middle', bold: true });
+    if (G.camp && G.camp.mecs.has('impulso')) { // campaña: botón IMPULSO
+      const d = dashButton(), rdy = G.camp.dashCd <= 0, on = performance.now() - input.dTap < 150;
+      ctx.fillStyle = rgb(PINK, on ? 0.5 : rdy ? 0.22 : 0.08); circle(d.x, d.y, d.r); ctx.fill();
+      ctx.strokeStyle = rgb(PINK, rdy ? 0.95 : 0.4); ctx.lineWidth = 2; ctx.stroke();
+      if (!rdy) { ctx.strokeStyle = rgb(PINK); ctx.lineWidth = 3; ctx.beginPath(); ctx.arc(d.x, d.y, d.r + 4, -Math.PI / 2, -Math.PI / 2 + TAU * (1 - G.camp.dashCd / G.camp.dashCdMax)); ctx.stroke(); }
+      text('IMPULSO', d.x, d.y, 10, rdy ? WHITE : DIM, { align: 'center', base: 'middle', bold: true });
+    }
     ctx.globalAlpha = 1;
   }
 
@@ -3000,6 +3036,7 @@
     menuEl.classList.toggle('hidden', s !== 'menu');
     lobbyEl.classList.toggle('hidden', s !== 'lobby');
     busyEl.classList.toggle('hidden', s !== 'busy');
+    $('camp').classList.toggle('hidden', s !== 'camp');
     if (s === 'hangar' || s === 'logros') HGUI.show(s, G.hgFrom); else HGUI.hide();
     pauseEl.classList.toggle('hidden', s !== 'pause');
     endEl.classList.add('hidden');
@@ -3015,8 +3052,8 @@
       $('pause-msg').classList.toggle('hidden', mode === 'solo');
       $('btn-resume').classList.toggle('hidden', mode === 'client');
       $('btn-pause-restart').classList.toggle('hidden', mode === 'client');
-      $('btn-pause-restart').textContent = mode === 'host' ? 'Reiniciar (todos)' : 'Reiniciar';
-      $('btn-pause-menu').textContent = mode === 'host' ? 'Cerrar partida' : mode === 'client' ? 'Salir de la partida' : 'Menú';
+      $('btn-pause-restart').textContent = G.camp ? campTxt('pausa_reiniciar') : mode === 'host' ? 'Reiniciar (todos)' : 'Reiniciar';
+      $('btn-pause-menu').textContent = G.camp ? campTxt('pausa_salir') : mode === 'host' ? 'Cerrar partida' : mode === 'client' ? 'Salir de la partida' : 'Menú';
     }
     if ((s === 'over' || s === 'win') && !G.roundAwarded) { // Luces ✦ de la partida (cada uno suma las suyas en su perfil)
       G.roundAwarded = true;
@@ -3071,6 +3108,7 @@
     else if (G.state === 'pause') setState('play');
   }
   function toMenu() {
+    G.camp = null;
     if (NET.mode === 'solo') NET.myId = 0;
     useMap(prefMap()); // vuelve a mi mapa (en una sala ajena jugué el del host)
     renderMapPickers();
@@ -3079,6 +3117,7 @@
     showMenuSection('main');
   }
   function exitToMenu() { // salir desde cualquier pantalla (si hay partida online, la cierra o se va)
+    if (G.camp && NET.mode === 'solo') { campExitToHub(); return; } // campaña: vuelve a la lista de niveles
     if (NET.mode === 'client') { clientLeave(); return; }
     if (NET.mode === 'host') hostClose();
     toMenu();
@@ -3089,6 +3128,7 @@
     } else togglePause();
   }
   function restartPressed() {
+    if (G.camp && NET.mode === 'solo') { if (G.state === 'play' || G.state === 'pause') campRetry(); return; } // desde el checkpoint
     if (NET.mode === 'host') hostStart();
     else if (NET.mode === 'solo') startGame();
   }
@@ -3119,6 +3159,7 @@
       if (!box) continue;
       if (!box.childElementCount) {
         MAPS.forEach((m, i) => {
+          if (m.camp) return; // mapas de la campaña: solo en la campaña
           const b = document.createElement('button');
           b.type = 'button'; b.className = 'mapbtn'; b.dataset.map = m.id;
           b.innerHTML = `<b></b><small></small>`;
@@ -3143,6 +3184,8 @@
 
   const tap = (el, fn) => el.addEventListener('click', (e) => { e.preventDefault(); fn(); });
   tap($('btn-play'), () => { menuError(''); startGame(); });
+  tap($('btn-campania'), () => { menuError(''); campOpen(); });
+  $('camp').addEventListener('click', campClick);
   tap($('btn-hangar'), () => openHangar('hangar'));
   tap($('btn-logros'), () => openHangar('logros'));
   tap($('btn-host'), () => { menuError(''); hostCreate(); });
@@ -3183,9 +3226,11 @@
     const c = e.code;
     if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Space'].includes(c)) e.preventDefault();
     if (HGUI.open) { if (HGUI.key(e)) e.preventDefault(); return; } // Hangar / Logros: tienen sus propias teclas
+    if (G.state === 'camp') { if (!e.repeat && campKey(e)) e.preventDefault(); return; } // pantallas de la campaña
     if (e.repeat) { input.keys.add(c); return; }
     input.keys.add(c);
     const st = G.state;
+    if (G.camp && st === 'play' && (c === 'Space' || c === 'ShiftLeft' || c === 'ShiftRight')) { G.camp.dashReq = true; return; } // Impulso (en campaña Espacio no pausa)
     if (c === 'KeyP' || c === 'Enter' || c === 'NumpadEnter' || c === 'Space') {
       if (st === 'play' || st === 'pause') pausePressed();
       else if (st === 'menu' && c !== 'Space' && $('menu-join').classList.contains('hidden')) startGame();
@@ -3195,9 +3240,10 @@
     } else if (/^(Digit|Numpad)[123]$/.test(c)) {
       switchWeapon(+c.slice(-1) - 1);
     } else if (c === 'KeyQ') {
-      switchWeapon(myWeapon() + 1);
+      switchWeapon(myWeapon() + 1, 1);
     } else if (c === 'Escape') {
       if (st === 'play') { if (NET.mode === 'client') pausePressed(); else setState('pause'); }
+      else if (G.camp && st === 'pause') campExitToHub();
       else if (NET.mode === 'solo' && st !== 'menu') toMenu();
       else if (st === 'menu') showMenuSection('main');
     }
@@ -3211,7 +3257,7 @@
     const now = performance.now(), fresh = now - input.wheelT > 150;
     input.wheelT = now;
     if (!fresh || Math.abs(e.deltaY) < 1) return;
-    switchWeapon(myWeapon() + (e.deltaY > 0 ? 1 : -1));
+    switchWeapon(myWeapon() + (e.deltaY > 0 ? 1 : -1), e.deltaY > 0 ? 1 : -1);
   }, { passive: false });
   window.addEventListener('blur', () => { input.keys.clear(); releaseSticks(); });
   document.addEventListener('visibilitychange', () => {
@@ -3252,6 +3298,1067 @@
     const rest = QS.toString();
     try { history.replaceState(null, '', location.pathname + (rest ? `?${rest}` : '') + location.hash); } catch (e) { /* nada */ }
   }
+
+  // ===========================================================================
+  // v5.2 web: CAMPAÑA. Port de la campaña de la compu publicada (neon_dodge.py 3a845ad9): los mismos actos que
+  // la compu deja jugar (1 «Chispas» y 2 «Los Halcones», 7 niveles), con sus diálogos, radio, jefe, Impulso,
+  // anillos, núcleo, alas aliadas, Taller y 3 ranuras. Solo en modo solo (el online sigue igual: PROTO 2).
+  // Guardado: localStorage['neonDodge.campania1'] = {version: 1, campania: 'campania1', slots: [ranura|null x3]}
+  // (mismo formato de ranura que ~/.neon_dodge_campania.json de la compu).
+  // ===========================================================================
+  const CD = window.NeonCampaniaData || { actos: [], textos_ui: {}, niveles_ids: [], mejoras: [], personajes: {}, mecanicas: {}, jefes: {} };
+  const CAMP_KEY = 'neonDodge.campania1', CAMP_SLOTS = 3;
+  const CAMP_REPLAY_FRAC = 0.25, CAMP_TRANSITION_HOLD = 1.5, CAMP_FINISH_DELAY = 1.2, CAMP_BOSS_FINISH_DELAY = 2.2;
+  const CAMP_RADIO_BASE = 3.5, CAMP_RADIO_PER_CHAR = 0.05, CAMP_RADIO_MAX = 6.0, CAMP_RADIO_QUEUE = 2;
+  const CAMP_ALLY_BULLET_SPEED = 560, CAMP_WAVE_CAP = 14, CAMP_ENEMY_CAP = 20;
+  const CAMP_RUN_BONUS = ['sin_perder_vidas', 'tiempo_max_s', 'alas_sin_caer'];
+  const CAMP_KIND_PLURAL = { orb: 'orbes', spinner: 'spinners', hunter: 'hunters' };
+  const CAMP_ARMOR_IMPULSO = { halcon: 0.85, lumen: 0.7 }; // armaduras de la compu que acortan la recarga del Impulso
+  const CAMP_OBJ_OK = ['sobrevivir', 'eliminar', 'oleadas', 'terminales', 'proteger', 'jefe'];
+  const CAMP_MEC_OK = ['impulso', 'anillos', 'alas'];
+  const CAMP_BOSSES = { warden: Warden, seeker: Seeker, titan: Titan };
+  const CAMP_TXT_FALLBACK = {
+    guardado_corrupto: 'No se pudo leer el guardado; se hizo una copia.',
+    guardado_no_disponible: 'No se puede guardar: se juega igual, pero el progreso no queda.',
+    fin_etapa_a: 'Fin de la Etapa A: ¡seguí atento!', registro_guardado: '¡Registro nuevo guardado!',
+    registro_proximamente: 'Se leen en una próxima actualización.', bonus_perdido: 'Bonus perdido en este intento',
+    taller_saldo: 'Tenés {n} ✦', ver_intro: 'Ver intro', taller_vacio: 'Completá un nivel para ver las mejoras.',
+  };
+  function campTxt(key, kw) {
+    let node = CD.textos_ui;
+    for (const part of key.split('.')) node = node && typeof node === 'object' ? node[part] : undefined;
+    let t = typeof node === 'string' || typeof node === 'number' ? String(node) : (CAMP_TXT_FALLBACK[key] || key);
+    if (kw) t = t.replace(/\{(\w+)\}/g, (m, k) => (k in kw ? String(kw[k]) : m));
+    return t;
+  }
+  function campLevelOk(lv) { // lo mismo que camp_level_supported de la compu
+    if (!lv.fases || !lv.fases.length || !(lv.mecanicas_activas || []).every((m) => CAMP_MEC_OK.includes(m))) return false;
+    if (lv.oscuridad || lv.fondo_batalla || (lv.elementos_mapa && Object.keys(lv.elementos_mapa).length)) return false;
+    for (const f of lv.fases) {
+      const o = f.objetivo || {};
+      if (!CAMP_OBJ_OK.includes(o.tipo) || f.sigilo || f.oscuridad) return false;
+      if (o.tipo === 'jefe') {
+        const v = ((CD.jefes[o.jefe] || {}).variantes || {})[o.variante];
+        if (!CAMP_BOSSES[o.jefe] || !v || v.extras) return false;
+      }
+    }
+    return true;
+  }
+  const CAMP_PLAYABLE = (() => {
+    const out = [];
+    for (const a of CD.actos) { if (!a.niveles || !a.niveles.length || a.proximamente || !a.niveles.every(campLevelOk)) break; out.push(a); }
+    return out;
+  })();
+  const campPlayableIds = () => CAMP_PLAYABLE.flatMap((a) => a.niveles.map((l) => l.id));
+  const campLevel = (lid) => { for (const a of CAMP_PLAYABLE) for (const l of a.niveles) if (l.id === lid) return l; return null; };
+  const campActOf = (lid) => CD.actos.find((a) => (a.niveles || []).some((l) => l.id === lid)) || CD.actos[0];
+  const campChar = (q) => { const c = CD.personajes[q] || {}; return { nombre: c.nombre || q, color: c.color ? hex(c.color) : [176, 176, 192] }; };
+  const campMejora = (id) => CD.mejoras.find((m) => m.id === id) || null;
+  function campMejoraLevel(slot, id) { // una sola escalera por mejora: Taller y Hangar comparten nivel (el máximo)
+    return Math.max(slot.mejoras[id] | 0, HG.MEJORA_BY_ID[id] ? PERFIL.level(id) : 0);
+  }
+  function campMejoraValue(slot, id) {
+    const m = campMejora(id);
+    if (!m) return 0;
+    const lvl = campMejoraLevel(slot, id);
+    return lvl > 0 && lvl <= m.niveles.length ? m.niveles[lvl - 1].valor : m.base;
+  }
+  const campFmtTime = (s) => { s = Math.max(0, Math.round(s)); return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`; };
+  function campWeighted(wts, allowed) {
+    const items = Object.entries(wts || {}).filter(([k, v]) => allowed.includes(k) && +v > 0);
+    if (!items.length) return allowed[0];
+    let x = Math.random() * items.reduce((a, [, v]) => a + +v, 0);
+    for (const [k, v] of items) { x -= +v; if (x <= 0) return k; }
+    return items[items.length - 1][0];
+  }
+
+  // ---- guardado (3 ranuras) ----
+  function campNewSlot() {
+    return { version: 1, campania: 'campania1', creado: new Date().toISOString().slice(0, 19), tiempo_jugado_s: 0, completados: {},
+      nivel_actual: campPlayableIds()[0] || '1-1', checkpoint: null, luces: 0, mejoras: {}, armas: ['pistola'], mecanicas: [], guerra: {},
+      registros: [], dialogos_vistos: [], ajustes: { saltear_dialogos_vistos: true }, ultima_arma: 'pistola' };
+  }
+  const cnum = (v, d, lo, hi) => { v = Number(v); return Number.isFinite(v) ? Math.min(hi, Math.max(lo, v)) : d; };
+  function campSanitizeSlot(s) { // como camp_sanitize_slot: lo roto vuelve a su valor inicial, lo desconocido se ignora
+    if (!s || typeof s !== 'object' || Array.isArray(s)) return null;
+    const out = campNewSlot(), ids = CD.niveles_ids.length ? CD.niveles_ids : campPlayableIds();
+    out.creado = String(s.creado || out.creado).slice(0, 40);
+    out.tiempo_jugado_s = cnum(s.tiempo_jugado_s, 0, 0, 1e9);
+    if (s.completados && typeof s.completados === 'object') {
+      for (const [lid, c] of Object.entries(s.completados)) {
+        if (!ids.includes(lid) || !c || typeof c !== 'object') continue;
+        out.completados[lid] = { mejor_tiempo_s: Math.round(cnum(c.mejor_tiempo_s, 0, 0, 1e9) * 100) / 100,
+          bonus: (Array.isArray(c.bonus) ? c.bonus : []).filter((b) => typeof b === 'string').slice(0, 12) };
+      }
+    }
+    out.nivel_actual = ids.includes(s.nivel_actual) ? s.nivel_actual : (ids.find((i) => !(i in out.completados)) || out.nivel_actual);
+    const cp = s.checkpoint;
+    if (cp && typeof cp === 'object' && campLevel(cp.nivel)) {
+      const f = Math.floor(cnum(cp.fase, 0, 0, 99));
+      if (f < campLevel(cp.nivel).fases.length) {
+        const st = cp.stats && typeof cp.stats === 'object' ? cp.stats : {}, o = {};
+        for (const k of ['tiempo_s', 'vidas_perdidas', 'alas_caidas', 'luces_extra', 'nucleo_frac']) if (k in st) o[k] = Math.round(cnum(st[k], 0, 0, 1e9) * 1000) / 1000;
+        out.checkpoint = { nivel: cp.nivel, fase: f, stats: o };
+      }
+    }
+    out.luces = Math.floor(cnum(s.luces, 0, 0, 1e6));
+    if (s.mejoras && typeof s.mejoras === 'object') for (const m of CD.mejoras) if (m.id in s.mejoras) out.mejoras[m.id] = Math.floor(cnum(s.mejoras[m.id], 0, 0, m.niveles.length));
+    if (Array.isArray(s.armas)) out.armas = ['pistola', ...new Set(s.armas.filter((a) => HG.WEAPON_IDS.includes(a) && a !== 'pistola'))];
+    if (Array.isArray(s.mecanicas)) out.mecanicas = [...new Set(s.mecanicas.filter((m) => typeof m === 'string').map((m) => m.slice(0, 30)))].slice(0, 20);
+    if (s.guerra && typeof s.guerra === 'object') for (const [k, v] of Object.entries(s.guerra)) if (typeof v === 'string') out.guerra[String(k).slice(0, 40)] = v.slice(0, 30);
+    if (Array.isArray(s.registros)) out.registros = [...new Set(s.registros.filter((r) => typeof r === 'string'))].slice(0, 40);
+    if (Array.isArray(s.dialogos_vistos)) out.dialogos_vistos = [...new Set(s.dialogos_vistos.filter((x) => typeof x === 'string').map((x) => x.slice(0, 40)))].slice(0, 400);
+    if (HG.WEAPON_IDS.includes(s.ultima_arma)) out.ultima_arma = s.ultima_arma;
+    if (s.ajustes && typeof s.ajustes.saltear_dialogos_vistos === 'boolean') out.ajustes.saltear_dialogos_vistos = s.ajustes.saltear_dialogos_vistos;
+    return out;
+  }
+  const CS = { slots: [null, null, null], warning: '', saveFailed: false };
+  CS.load = function () {
+    CS.slots = [null, null, null];
+    let raw = null;
+    try { raw = localStorage.getItem(CAMP_KEY); } catch (e) { CS.warning = campTxt('guardado_no_disponible'); return; }
+    if (raw === null) return;
+    let d = null;
+    try { d = JSON.parse(raw); } catch (e) { d = null; }
+    const slots = d && typeof d === 'object' ? d.slots : null;
+    const good = [null, null, null];
+    let broken = !Array.isArray(slots);
+    if (!broken) {
+      for (let i = 0; i < CAMP_SLOTS; i++) {
+        if (slots[i] === null || slots[i] === undefined) continue;
+        const ok = campSanitizeSlot(slots[i]);
+        if (!ok) { broken = true; break; }
+        good[i] = ok;
+      }
+    }
+    if (broken) { // guardado roto: copia aparte (así el próximo guardado no la pisa) y ranuras vacías
+      CS.warning = campTxt('guardado_corrupto');
+      try { localStorage.setItem(`${CAMP_KEY}.bak-${Date.now()}`, String(raw).slice(0, 200000)); } catch (e) { /* nada */ }
+      return;
+    }
+    CS.slots = good;
+  };
+  CS.save = function () {
+    try {
+      localStorage.setItem(CAMP_KEY, JSON.stringify({ version: 1, campania: 'campania1', slots: CS.slots }));
+      if (CS.warning === campTxt('guardado_no_disponible')) CS.warning = '';
+      return true;
+    } catch (e) {
+      CS.warning = campTxt('guardado_no_disponible');
+      if (!CS.saveFailed) toast(CS.warning);
+      CS.saveFailed = true;
+      return false;
+    }
+  };
+  CS.load();
+  const CAMP = { slotI: 0, screen: 'slots', act: 0, sel: '', confirm: -1, dialog: null, card: null, done: null, failReason: '', novelty: [] };
+  const campSlot = () => CS.slots[CAMP.slotI] || (CS.slots[CAMP.slotI] = campNewSlot());
+  const campActsForSync = () => CAMP_PLAYABLE.map((a) => ({ id: a.id, niveles: a.niveles.map((l) => l.id) }));
+  function campUnlocked(lid) {
+    const ids = campPlayableIds(), i = ids.indexOf(lid);
+    return i === 0 || (i > 0 && ids[i - 1] in campSlot().completados);
+  }
+  // loadout de la campaña: el del Hangar con el nivel de las mejoras compartidas = max(Hangar, Taller de la ranura)
+  function campLoadout() {
+    const lo = PERFIL.loadout(), slot = campSlot();
+    for (const id of Object.keys(slot.mejoras)) if (HG.MEJORA_BY_ID[id]) lo.mejoras[id] = Math.max(lo.mejoras[id] | 0, slot.mejoras[id] | 0);
+    return lo;
+  }
+
+  // ---- un nivel en juego (CampRun de la compu) ----
+  class CampRun {
+    constructor(slotI, lid, phase, stats) {
+      this.slot = CS.slots[slotI] || campNewSlot();
+      this.lid = lid;
+      this.level = campLevel(lid) || CAMP_PLAYABLE[0].niveles[0];
+      this.phases = this.level.fases;
+      const ws = [...new Set((this.level.armas_disponibles || []).map((a) => HG.WEAPON_IDS.indexOf(a)).filter((i) => i >= 0))].sort();
+      this.weapons = ws.length ? ws : [0];
+      this.mecs = new Set(this.level.mecanicas_activas || []);
+      const imp = (CD.mecanicas.impulso || {}).params || {};
+      this.dashCdMax = (campMejoraValue(this.slot, 'impulso_recarga') || 2.5) * (CAMP_ARMOR_IMPULSO[PERFIL.loadout().armadura] || 1);
+      this.dashDist = +imp.distancia_px || 150; this.dashTime = +imp.duracion_s || 0.15; this.dashInv = +imp.invulnerable_s || 0.2;
+      this.wingHp = Math.max(1, Math.floor(campMejoraValue(this.slot, 'alas_blindaje') || 3));
+      const st = stats || {};
+      this.timeDone = +st.tiempo_s || 0; this.livesLost = st.vidas_perdidas | 0; this.wingsDown = st.alas_caidas | 0;
+      this.lucesExtra = st.luces_extra | 0; this.coreFrac = 'nucleo_frac' in st ? +st.nucleo_frac : null; this.bossTime = null;
+      const pu = this.level.powerups || {};
+      this.puEvery = +(pu.cada_s === undefined ? 25 : pu.cada_s) || 0;
+      this.puTypes = pu.tipos || { heal: 1 };
+      this.radio = { cur: null, queue: [], shown: [] };
+      this.wings = []; this.capsules = []; this.ghosts = [];
+      this.pi = phase >= 0 && phase < this.phases.length ? phase : 0;
+      this.finishT = 0; this.finished = false; this.attempts = 1;
+      this.dashT = 0; this.dashDir = [0, -1]; this.dashCd = 0; this.dashReq = false; this.dashCount = 0;
+      this.bonusVoid = this.pi > 0; this.lucesStart = this.lucesExtra; this.log = [];
+      const pf = this.phases.find((f) => (f.objetivo || {}).tipo === 'proteger' && f.objetivo.nucleo);
+      this.nucleoNombre = pf ? (pf.objetivo.nucleo.nombre || 'Núcleo') : 'Núcleo';
+      this.resetPhaseVars();
+    }
+    resetPhaseVars() {
+      this.obj = this.phases[this.pi].objetivo || { tipo: 'sobrevivir', duracion_s: 60 };
+      this.otype = this.obj.tipo;
+      this.t = 0; this.hold = CAMP_TRANSITION_HOLD; this.kills = 0; this.killsType = {}; this.seenTypes = new Set();
+      this.fired = new Set(); this.pending = []; this.complete = false;
+      this.dir = this.phases[this.pi].director || null; this.dirTimer = 0; this.puTimer = this.puEvery;
+      this.rings = []; this.core = null; this.coreLow = false;
+      this.olI = -1; this.olT = 0; this.olPause = 0; this.olPassed = 0; this.bossStarted = false;
+    }
+    startPhase(i) {
+      this.pi = i;
+      this.resetPhaseVars();
+      const o = this.obj, ph = this.phases[i];
+      if (ph.limpiar_enemigos_al_entrar || o.limpiar_enemigos_al_entrar) {
+        for (const e of G.enemies) if (e.alive) { e.alive = false; G.particles.burst(e.x, e.y, WHITE, 14, 200, 4); }
+        G.enemies = []; G.ebullets.length = 0;
+      }
+      if (this.otype === 'terminales') {
+        const rad = (+o.radio || 0.07) * MIN_WH;
+        for (const pt of o.puntos || []) this.rings.push({ x: pt.x * W, y: pt.y * H, r: rad, fill: 0, done: false });
+      } else if (this.otype === 'proteger') {
+        const n = o.nucleo || {}, hp = +n.vida || 20;
+        this.core = { x: (n.x ?? 0.5) * W, y: (n.y ?? 0.4) * H, r: (+n.r || 0.045) * MIN_WH, hp, max: hp, nombre: n.nombre || 'Núcleo', flash: 0 };
+      } else if (this.otype === 'eliminar') {
+        for (const pt of o.colocar || []) if (ENEMY_HP[o.enemigo]) { const e = G.makeEnemy(this.threat(), o.enemigo, pt.x * W, pt.y * H); e.vx *= 0.3; e.vy *= 0.3; G.enemies.push(e); }
+      } else if (this.otype === 'jefe') {
+        campStartBoss(o, this.bossVariant());
+        this.bossStarted = true;
+      }
+      G.showBanner(this.hudLabel(), PINK, 2.4);
+      this.event('inicio');
+      if (this.otype === 'jefe') this.event('jefe_inicio');
+    }
+    threat() { return ((this.dir && this.dir.amenaza) || this.obj.amenaza || 2) | 0; }
+    progress() {
+      const o = this.obj, tp = this.otype;
+      if (tp === 'sobrevivir' || tp === 'proteger') return clamp(this.t / Math.max(1, +o.duracion_s || 60), 0, 1);
+      if (tp === 'eliminar') return clamp(this.kills / Math.max(1, o.cantidad | 0), 0, 1);
+      if (tp === 'oleadas') return clamp(this.olPassed / Math.max(1, (o.lista || []).length), 0, 1);
+      if (tp === 'terminales') return clamp(this.rings.reduce((a, r) => a + r.fill, 0) / Math.max(1, this.rings.length), 0, 1);
+      if (tp === 'jefe') return G.boss ? clamp(1 - G.boss.hp / Math.max(1, G.boss.maxHp), 0, 1) : (this.complete ? 1 : 0);
+      return clamp(this.t / 60, 0, 1);
+    }
+    hudLabel() {
+      const o = this.obj, tp = this.otype, v = { i: 0, n: 0, s: 0, nombre: '', jefe: '', tipo: '' };
+      let key = `obj_${tp}`, suffix = '';
+      if (tp === 'sobrevivir' || tp === 'proteger') {
+        const left = Math.max(0, (+o.duracion_s || 60) - this.t);
+        v.s = Math.ceil(left);
+        if (tp === 'proteger') { v.nombre = (this.core || {}).nombre || this.nucleoNombre; suffix = `  ${campFmtTime(Math.ceil(left))}`; }
+      } else if (tp === 'eliminar') {
+        const total = o.cantidad | 0 || 1;
+        v.n = Math.max(0, total - this.kills); v.i = Math.min(this.kills, total);
+        if (ENEMY_HP[o.enemigo]) { key = 'obj_eliminar_tipo'; v.tipo = CAMP_KIND_PLURAL[o.enemigo] || o.enemigo; }
+      } else if (tp === 'oleadas') { v.n = (o.lista || []).length; v.i = Math.min(v.n, Math.max(1, this.olI + 1)); }
+      else if (tp === 'terminales') { v.n = this.rings.length; v.i = this.rings.filter((r) => r.done).length; }
+      else if (tp === 'jefe') v.jefe = G.boss ? G.boss.name : (this.bossVariant().nombre_mostrado || 'JEFE');
+      const tpl = String(o.etiqueta_hud || campTxt(key));
+      return tpl.replace(/\{(\w+)\}/g, (m, k) => (k in v ? String(v[k]) : m)) + suffix;
+    }
+    bossVariant() { return (((CD.jefes[this.obj.jefe] || {}).variantes || {})[this.obj.variante]) || {}; }
+    lines() { const ph = this.phases[this.pi]; return (ph.radio || []).concat(ph.eventos || []); }
+    fire(idx) {
+      if (this.fired.has(idx)) return;
+      this.fired.add(idx);
+      const it = this.lines()[idx];
+      if ('texto' in it) { this.radioPush(String(it.quien || 'flota'), String(it.texto)); this.log.push(`radio ${this.lid} t=${this.t.toFixed(1)} ${it.quien}`); }
+      else if (it.accion === 'spawn') {
+        const pts = (it.en || []).slice();
+        for (const [kind, n] of Object.entries(it.enemigos || {})) for (let k = 0; k < (n | 0); k++) {
+          const pt = pts.shift();
+          if (ENEMY_HP[kind]) this.spawnEnemy(kind, 'bordes', this.threat(), pt ? [pt.x * W, pt.y * H] : null);
+        }
+      }
+    }
+    event(name, kw) {
+      kw = kw || {};
+      this.lines().forEach((it, i) => {
+        const c = it.cuando || {};
+        if (this.fired.has(i) || c.evento !== name) return;
+        for (const [k, v] of Object.entries(c)) if (k !== 'evento' && k !== 'demora_s' && kw[k] !== v) return;
+        const d = +c.demora_s || 0;
+        if (d > 0) { if (!this.pending.some(([, j]) => j === i)) this.pending.push([this.t + d, i]); }
+        else this.fire(i);
+      });
+    }
+    checkTimeTriggers() {
+      let prog = null;
+      this.lines().forEach((it, i) => {
+        if (this.fired.has(i)) return;
+        const c = it.cuando || {};
+        if ('t' in c && this.t >= +c.t) this.fire(i);
+        else if ('progreso' in c) { if (prog === null) prog = this.progress(); if (prog >= +c.progreso) this.fire(i); }
+      });
+      if (this.pending.length) {
+        const due = this.pending.filter(([tt]) => this.t >= tt).map(([, j]) => j);
+        this.pending = this.pending.filter(([tt]) => this.t < tt);
+        for (const j of due) this.fire(j);
+      }
+    }
+    radioPush(q, txt) { const r = this.radio; r.queue.push([q, txt]); while (r.queue.length > CAMP_RADIO_QUEUE) r.queue.shift(); }
+    radioUpdate(dt) {
+      const r = this.radio;
+      if (r.cur) { r.cur[2] -= dt; if (r.cur[2] <= 0) r.cur = null; }
+      if (!r.cur && r.queue.length) {
+        const [q, txt] = r.queue.shift(), dur = Math.min(CAMP_RADIO_MAX, CAMP_RADIO_BASE + CAMP_RADIO_PER_CHAR * txt.length);
+        r.cur = [q, txt, dur, dur]; r.shown.push(`${q}: ${txt}`);
+      }
+    }
+    spawnEnemy(kind, desde, w, pos, tag = -1) {
+      if (G.enemies.length >= CAMP_ENEMY_CAP) return null;
+      if (!pos && desde === 'arriba') pos = [rand(40, W - 40), -20];
+      const e = G.makeEnemy(w, kind, pos ? pos[0] : undefined, pos ? pos[1] : undefined);
+      e.campWave = tag; e.campCore = false;
+      if (this.core && Math.random() < (this.obj.fraccion_al_nucleo ?? 0.5)) {
+        e.campCore = true;
+        const dx = this.core.x - e.x, dy = this.core.y - e.y, sp = Math.hypot(e.vx, e.vy), a = Math.atan2(dy, dx) + rand(-0.21, 0.21);
+        e.vx = Math.cos(a) * sp; e.vy = Math.sin(a) * sp;
+      }
+      G.enemies.push(e);
+      if (!this.seenTypes.has(kind)) { this.seenTypes.add(kind); this.event('primer_enemigo', { tipo: kind }); }
+      return e;
+    }
+    enemyTarget(e) { // los enemigos «al núcleo» van al núcleo (orbes y spinners se corrigen de a poco)
+      if (!this.core || !e.campCore) return null;
+      const c = this.core;
+      if (e.kind !== 'hunter') {
+        const dx = c.x - e.x, dy = c.y - e.y, d = Math.hypot(dx, dy), sp = Math.hypot(e.vx, e.vy);
+        if (d > 1 && sp > 1) { e.vx += (dx / d * sp - e.vx) * 0.02; e.vy += (dy / d * sp - e.vy) * 0.02; }
+      }
+      return c;
+    }
+    director(dt) {
+      const d = this.dir;
+      if (!d || this.hold > 0 || this.complete) return;
+      this.dirTimer -= dt;
+      if (this.dirTimer > 0) return;
+      this.dirTimer = +d.intervalo_s || 6;
+      const [lo, hi] = (d.por_oleada || [1, 1]).concat([1, 1]);
+      const n = (lo | 0) + Math.floor(Math.random() * (Math.max(lo | 0, hi | 0) - (lo | 0) + 1));
+      const cap = d.tope_vivos | 0 || 8;
+      for (let i = 0; i < n; i++) {
+        if (G.enemies.length >= cap) break;
+        this.spawnEnemy(campWeighted(d.mezcla || { orb: 1 }, KINDS), d.desde || 'bordes', this.threat());
+      }
+    }
+    onKill(e) {
+      this.killsType[e.kind] = (this.killsType[e.kind] || 0) + 1;
+      this.event('enemigo_eliminado', { tipo: e.kind, n: this.killsType[e.kind] });
+      if (this.otype === 'eliminar' && (!this.obj.enemigo || this.obj.enemigo === e.kind)) this.kills++;
+    }
+    onLifeLost() { this.livesLost++; this.event('vida_perdida'); }
+    onAbility(boss, k) {
+      const names = { [AB.W_RING]: 'anillo', [AB.W_MINES]: 'minas', [AB.S_TELE]: 'teletransporte', [AB.S_MISS]: 'misiles' };
+      if (names[k]) this.event('jefe_habilidad', { habilidad: names[k] });
+    }
+    onBossKilled() { if (this.otype === 'jefe') { this.bossTime = this.t; this.phaseComplete(); } }
+    // ---- Impulso ----
+    movePlayer(p, inp, dt) {
+      const want = (this.dashReq || inp.dash) && this.mecs.has('impulso');
+      this.dashReq = false;
+      if (want && this.dashCd <= 0 && this.dashT <= 0 && p.hp > 0) {
+        let dx = inp.mx, dy = inp.my;
+        if (dx * dx + dy * dy < 0.01) { dx = inp.ax - p.x; dy = inp.ay - p.y; }
+        if (dx * dx + dy * dy < 1) { dx = Math.cos(p.angle); dy = Math.sin(p.angle); }
+        this.dashDir = norm(dx, dy);
+        this.dashT = this.dashTime; this.dashCd = this.dashCdMax; this.dashCount++;
+        p.invuln = Math.max(p.invuln, this.dashInv);
+        G.particles.ring(p.x, p.y, p.color, 40, 0.25, 2);
+      }
+      if (this.dashT > 0) {
+        const step = Math.min(dt, this.dashT);
+        this.dashT -= dt;
+        const k = this.dashDist / Math.max(0.01, this.dashTime) * step / 3;
+        for (let i = 0; i < 3; i++) { // no atraviesa obstáculos
+          p.x += this.dashDir[0] * k; p.y += this.dashDir[1] * k;
+          if (MAP.obstacles.length) pushOut(p, p.r);
+          p.x = clamp(p.x, p.r, W - p.r); p.y = clamp(p.y, p.r, H - p.r);
+        }
+        this.ghosts.push([p.x, p.y, p.angle, 0.22]);
+      } else stepMove(p, inp.mx, inp.my, dt);
+    }
+    // ---- alas aliadas (modo escolta) ----
+    setupWings() {
+      this.wings = [];
+      const al = this.level.alas;
+      if (!al || !this.mecs.has('alas')) return;
+      const pr = (CD.mecanicas.alas || {}).params || {};
+      const ids = (al.nombres || []).map(String).concat(Array(al.sin_nombre | 0).fill('ala')).slice(0, Math.max(0, 5 - G.players.length));
+      const p = G.player;
+      ids.forEach((cid, i) => {
+        const ch = campChar(cid);
+        this.wings.push({ cid, idx: i, name: cid === 'ala' ? `Ala ${i + 1}` : ch.nombre, color: cid === 'ala' ? LIME : ch.color,
+          x: p.x + (i % 2 ? 60 : -60), y: p.y + 30, vx: 0, vy: 0, maxHp: this.wingHp, hp: this.wingHp, r: +pr.radio_px || 13,
+          speed: +pr.velocidad_px_s || 210, rate: +pr.cadencia_s || 0.55, dmg: +pr.dano || 0.6, reach: +pr.alcance_px || 380,
+          respawnS: +pr.reaparecen_s || 20, cd: rand(0.1, +pr.cadencia_s || 0.55), down: 0, ang: -Math.PI / 2, orbit: i * Math.PI + 0.6, flash: 0 });
+      });
+    }
+    wingHit(w) {
+      if (w.flash > 0 || w.down > 0) return;
+      w.hp -= 1; w.flash = 0.6;
+      G.particles.burst(w.x, w.y, w.color, 10, 160, 4);
+      if (w.hp <= 0) {
+        w.down = w.respawnS; this.wingsDown++;
+        this.capsules.push([w.x, w.y, rand(-40, 40), -90, 0, w.color]);
+        G.particles.burst(w.x, w.y, w.color, 26, 240, 6); G.particles.ring(w.x, w.y, w.color, 60, 0.4, 3);
+        G.showBanner(campTxt('ala_eyectada', { nombre: w.name }), w.color, 2.2);
+        this.event('ala_caida', { ala: w.cid !== 'ala' ? w.cid : 'sin_nombre' });
+      }
+    }
+    updateWings(dt) {
+      const p = G.player, anchor = p.hp > 0 ? [p.x, p.y] : MAP.spawns[0];
+      const alive = this.wings.filter((w) => w.down <= 0);
+      for (const w of this.wings) {
+        if (w.down > 0) {
+          w.down -= dt;
+          if (w.down <= 0) {
+            w.down = 0; w.hp = w.maxHp; w.flash = 1.0;
+            w.x = clamp(anchor[0] + rand(-120, 120), 30, W - 30); w.y = H + 20; w.vx = 0; w.vy = -w.speed;
+            G.showBanner(campTxt('ala_vuelve', { nombre: w.name }), w.color, 1.8);
+          }
+          continue;
+        }
+        w.flash = Math.max(0, w.flash - dt);
+        w.orbit += 0.7 * dt;
+        const k = Math.max(0, alive.indexOf(w)), off = k * TAU / Math.max(1, alive.length);
+        const tx = clamp(anchor[0] + Math.cos(w.orbit + off) * 90, 24, W - 24), ty = clamp(anchor[1] + Math.sin(w.orbit + off) * 90, 24, H - 24);
+        const dx = tx - w.x, dy = ty - w.y, dist = Math.hypot(dx, dy);
+        const wx = dist > 1 ? dx / dist * Math.min(w.speed, dist * 4) : 0, wy = dist > 1 ? dy / dist * Math.min(w.speed, dist * 4) : 0;
+        const kk = Math.min(1, 6 * dt);
+        w.vx += (wx - w.vx) * kk; w.vy += (wy - w.vy) * kk;
+        w.x += w.vx * dt; w.y += w.vy * dt;
+        if (MAP.obstacles.length) pushOut(w, w.r);
+        w.x = clamp(w.x, w.r, W - w.r); w.y = clamp(w.y, -40, H + 40);
+        let best = null, bd = w.reach * w.reach;
+        for (const e of G.enemies) if (e.alive) { const d = (e.x - w.x) ** 2 + (e.y - w.y) ** 2; if (d < bd) { best = e; bd = d; } }
+        for (const m of G.mines) { const d = (m.x - w.x) ** 2 + (m.y - w.y) ** 2; if (!m.dead && d < bd) { best = m; bd = d; } }
+        if (G.boss && G.boss.vulnerable) { const d = Math.max(0, Math.hypot(G.boss.x - w.x, G.boss.y - w.y) - G.boss.r) ** 2; if (d < bd) { best = G.boss; bd = d; } }
+        if (best) {
+          const ax = best.x - w.x, ay = best.y - w.y;
+          w.ang = Math.atan2(ay, ax);
+          w.cd -= dt;
+          if (w.cd <= 0 && ax * ax + ay * ay > 1) {
+            w.cd = w.rate;
+            const [nx, ny] = norm(ax, ay);
+            G.bullets.push({ id: ++G.nid, x: w.x + nx * 14, y: w.y + ny * 14, vx: nx * CAMP_ALLY_BULLET_SPEED, vy: ny * CAMP_ALLY_BULLET_SPEED,
+              life: w.reach / CAMP_ALLY_BULLET_SPEED + 0.1, r: 4, dmg: w.dmg, c: w.color, w: 1, owner: -1, ally: true });
+          }
+        } else if (w.vx * w.vx + w.vy * w.vy > 100) w.ang = Math.atan2(w.vy, w.vx);
+        for (const e of G.enemies) { // contacto: el enemigo recibe 1 y el ala pierde 1
+          if (!e.alive || (e.x - w.x) ** 2 + (e.y - w.y) ** 2 >= (e.r + w.r) ** 2) continue;
+          if (w.flash <= 0) {
+            e.hp -= 1; e.flash = 0.06;
+            if (e.hp <= 0.001) killEnemy(e, true, undefined, false, true);
+            this.wingHit(w);
+          }
+          const [ax, ay] = norm(e.x - w.x, e.y - w.y), sp = Math.max(120, Math.hypot(e.vx, e.vy));
+          if (e.alive && (ax || ay)) { e.vx = ax * sp; e.vy = ay * sp; }
+          break;
+        }
+        if (w.down <= 0 && G.boss && G.ebullets.length) { // balas de jefes
+          G.ebullets = G.ebullets.filter((b) => { if (w.down <= 0 && (b.x - w.x) ** 2 + (b.y - w.y) ** 2 < (b.r + w.r * 0.8) ** 2) { this.wingHit(w); return false; } return true; });
+        }
+        if (w.down <= 0 && G.boss && (G.boss.x - w.x) ** 2 + (G.boss.y - w.y) ** 2 < (G.boss.r + w.r) ** 2) this.wingHit(w);
+        if (w.down <= 0) for (const m of G.mines) {
+          if (!m.dead && (m.x - w.x) ** 2 + (m.y - w.y) ** 2 < (MINE_R + w.r) ** 2) { killMine(m, false); this.wingHit(w); break; }
+        }
+      }
+      for (const c of this.capsules) { c[4] += dt; c[0] += c[2] * dt; c[1] += c[3] * dt; }
+      this.capsules = this.capsules.filter((c) => c[4] < 2.6);
+    }
+    // ---- cuadro ----
+    tick(dt) {
+      this.radioUpdate(dt);
+      this.dashCd = Math.max(0, this.dashCd - dt);
+      this.slot.ultima_arma = HG.WEAPON_IDS[G.myWeapon] || 'pistola';
+      this.slot.tiempo_jugado_s += dt;
+      for (const gh of this.ghosts) gh[3] -= dt;
+      this.ghosts = this.ghosts.filter((gh) => gh[3] > 0);
+      if (this.finishT > 0) {
+        this.finishT -= dt;
+        this.updateWings(dt);
+        if (this.finishT <= 0) { this.finished = true; campLevelComplete(); }
+        return;
+      }
+      this.t += dt; this.hold -= dt;
+      this.updateWings(dt);
+      if (this.puEvery > 0) {
+        this.puTimer -= dt;
+        if (this.puTimer <= 0) { this.puTimer = this.puEvery; spawnPowerup(undefined, undefined, campWeighted(this.puTypes, PU_KINDS)); }
+      }
+      const o = this.obj, tp = this.otype;
+      if (tp === 'sobrevivir') { if (this.t >= (+o.duracion_s || 60)) this.phaseComplete(); }
+      else if (tp === 'eliminar') { if (this.kills >= (o.cantidad | 0 || 1)) this.phaseComplete(); }
+      else if (tp === 'terminales') {
+        const charge = Math.max(0.5, +o.tiempo_carga_s || 5), col = LIME;
+        for (const r of this.rings) {
+          if (r.done) continue;
+          if (G.players.some((p) => p.hp > 0 && (p.x - r.x) ** 2 + (p.y - r.y) ** 2 < r.r * r.r)) {
+            r.fill = Math.min(1, r.fill + dt / charge);
+            if (r.fill >= 1) {
+              r.done = true;
+              const n = this.rings.filter((q) => q.done).length;
+              G.particles.ring(r.x, r.y, col, r.r * 2, 0.6, 4); G.particles.burst(r.x, r.y, col, 20, 180, 5);
+              G.popup(r.x, r.y - r.r - 10, `${n}/${this.rings.length}`, col, true);
+              this.event('terminal_activada', { n });
+            }
+          }
+        }
+        if (this.rings.length && this.rings.every((r) => r.done)) this.phaseComplete();
+      } else if (tp === 'proteger') { this.tickCore(dt); if (this.core && this.t >= (+o.duracion_s || 60)) this.phaseComplete(); }
+      else if (tp === 'oleadas') this.tickWaves(dt);
+      else if (tp === 'jefe') { if (!this.bossStarted) { campStartBoss(o, this.bossVariant()); this.bossStarted = true; } }
+      else if (this.t >= (+o.duracion_s || 60)) this.phaseComplete();
+      this.director(dt);
+      this.checkTimeTriggers();
+    }
+    tickCore(dt) {
+      const c = this.core;
+      if (!c || G.state !== 'play') return;
+      c.flash = Math.max(0, c.flash - dt);
+      let hit = 0;
+      for (const e of G.enemies) if (e.alive && (e.x - c.x) ** 2 + (e.y - c.y) ** 2 < (e.r + c.r) ** 2) { hit++; killEnemy(e, false); }
+      if (G.boss && G.ebullets.length) G.ebullets = G.ebullets.filter((b) => { if ((b.x - c.x) ** 2 + (b.y - c.y) ** 2 < (b.r + c.r) ** 2) { hit++; return false; } return true; });
+      if (hit) { c.hp = Math.max(0, c.hp - hit); c.flash = 0.15; G.addShake(4); G.particles.ring(c.x, c.y, RED, c.r * 2.2, 0.35, 3); }
+      if (!this.coreLow && c.hp < c.max * 0.35) { this.coreLow = true; this.event('nucleo_bajo'); }
+      if (c.hp <= 0) campFail(campTxt('fallo_nucleo', { nombre: c.nombre }));
+    }
+    tickWaves(dt) {
+      const o = this.obj, lst = o.lista || [];
+      if (!lst.length) { this.phaseComplete(); return; }
+      if (this.olI < 0) { if (this.hold <= 0) this.startWave(0); return; }
+      if (this.olPause > 0) {
+        this.olPause -= dt;
+        if (this.olPause <= 0) {
+          const need = Object.entries(lst[this.olI + 1] || {}).reduce((a, [k, v]) => a + (ENEMY_HP[k] ? v | 0 : 0), 0);
+          const cap = o.tope_vivos | 0 || CAMP_WAVE_CAP, vivos = G.enemies.filter((e) => e.alive).length;
+          if (vivos && vivos + need > cap) { this.olPause = 0.05; return; }
+          this.startWave(this.olI + 1);
+        }
+        return;
+      }
+      this.olT += dt;
+      const alive = G.enemies.some((e) => e.alive && e.campWave >= 0), curAlive = G.enemies.some((e) => e.alive && e.campWave === this.olI);
+      if (this.olI >= lst.length - 1) { if (!alive) { this.olPassed = lst.length; this.phaseComplete(); } }
+      else if (!curAlive || this.olT >= (+o.max_espera_s || 20)) { this.olPassed = this.olI + 1; this.olPause = +o.pausa_s || 3; }
+    }
+    startWave(i) {
+      const o = this.obj, lst = o.lista || [];
+      this.olI = i; this.olT = 0; this.olPause = 0;
+      if (i === lst.length - 1) this.event('oleada_final');
+      for (const [kind, n] of Object.entries(lst[i] || {})) for (let k = 0; k < (n | 0); k++) if (ENEMY_HP[kind]) this.spawnEnemy(kind, o.desde || 'bordes', o.amenaza | 0 || 2, null, i);
+      G.showBanner(this.hudLabel(), PINK, 1.4);
+    }
+    phaseComplete() {
+      if (this.complete) return;
+      this.complete = true;
+      if (this.core) this.coreFrac = this.core.hp / Math.max(1, this.core.max);
+      this.timeDone += this.t;
+      for (const e of G.enemies) e.campCore = false;
+      this.log.push(`fase ${this.lid}${this.phases[this.pi].id || ''} completa t=${this.t.toFixed(1)}`);
+      if (this.pi + 1 < this.phases.length) {
+        this.slot.checkpoint = { nivel: this.lid, fase: this.pi + 1, stats: this.stats() };
+        CS.save();
+        for (const b of G.ebullets) G.particles.burst(b.x, b.y, b.c, 2, 60, 3, 0.3);
+        G.ebullets.length = 0;
+        this.startPhase(this.pi + 1);
+        G.showBanner(`${campTxt('checkpoint')}  ·  ${this.hudLabel()}`, LIME, 2.4);
+      } else {
+        this.finishT = this.otype === 'jefe' ? CAMP_BOSS_FINISH_DELAY : CAMP_FINISH_DELAY;
+        G.winTimer = 1e9; // nadie recibe daño mientras termina
+        for (const e of G.enemies) if (e.alive) killEnemy(e, false);
+        G.enemies = []; G.ebullets.length = 0; G.mines = []; G.missiles = [];
+        G.showBanner(campTxt('nivel_completo'), YELLOW, 2.0);
+      }
+    }
+    stats() {
+      const st = { tiempo_s: Math.round(this.timeDone * 100) / 100, vidas_perdidas: this.livesLost, alas_caidas: this.wingsDown, luces_extra: this.lucesExtra };
+      if (this.coreFrac !== null) st.nucleo_frac = Math.round(this.coreFrac * 1000) / 1000;
+      return st;
+    }
+  }
+
+  function campStartBoss(o, v) {
+    const Cls = CAMP_BOSSES[o.jefe] || Warden, b = new Cls();
+    b.index = 0;
+    b.maxHp = b.baseHp = b.hp = +v.vida_base || b.maxHp;
+    if (v.nombre_mostrado) b.name = v.nombre_mostrado;
+    G.boss = b; G.mines = []; G.missiles = [];
+    for (const p of G.players) p.bossHit = false;
+    G.stats.bossesSeen.push(b.name);
+    G.showBanner(`!! ${b.name} !!`, b.color, 2.5);
+    G.addShake(6);
+    G.particles.ring(W / 2, 60, b.color, 400, 1.0, 5);
+  }
+
+  // ---- flujo (ranuras, hub, diálogos, nivel, fin) ----
+  function campGo(screen) { CAMP.screen = screen; if (G.state !== 'camp') setState('camp'); campRender(); }
+  function campOpen() {
+    if (NET.mode !== 'solo' || G.state !== 'menu') return;
+    saveName();
+    CS.load(); // por si otra pestaña jugó
+    CAMP.confirm = -1;
+    useMap('hangar_faro');
+    campGo('slots');
+  }
+  function campNew(i) {
+    CAMP.slotI = i;
+    CS.slots[i] = campNewSlot();
+    CS.save();
+    const lid = campSlot().nivel_actual;
+    CAMP.sel = lid; CAMP.act = Math.max(0, CD.actos.indexOf(campActOf(lid)));
+    campPlay(lid);
+  }
+  function campEndOfContent() { const s = campSlot(); return Object.keys(s.completados).length > 0 && !campPlayableIds().includes(s.nivel_actual); }
+  function campContinue(i) {
+    CAMP.slotI = i;
+    const slot = campSlot(), cp = slot.checkpoint;
+    if (cp && campUnlocked(cp.nivel)) { CAMP.sel = cp.nivel; campPlay(cp.nivel, true, false); return; }
+    if (campUnlocked(slot.nivel_actual)) { CAMP.sel = slot.nivel_actual; campPlay(slot.nivel_actual); return; }
+    CAMP.sel = '';
+    campOpenHub(i);
+  }
+  function campOpenHub(i) {
+    CAMP.slotI = i;
+    const slot = campSlot(), ids = campPlayableIds();
+    if (!CAMP.sel || !ids.includes(CAMP.sel)) CAMP.sel = campUnlocked(slot.nivel_actual) ? slot.nivel_actual : ([...ids].reverse().find((x) => x in slot.completados) || ids[0]);
+    CAMP.act = Math.max(0, CD.actos.indexOf(campActOf(CAMP.sel)));
+    if (G.camp) G.camp = null;
+    campGo('hub');
+  }
+  function campDelete(i) { CS.slots[i] = null; CS.save(); CAMP.confirm = -1; campRender(); }
+  function campDialog(lines, key, then) {
+    if (!lines || !lines.length) { then(); return; }
+    CAMP.dialog = { lines, i: 0, key, then };
+    campGo('dialog');
+  }
+  function campDialogNext(skip) {
+    const d = CAMP.dialog;
+    if (!d) return;
+    d.i++;
+    if (skip || d.i >= d.lines.length) {
+      CAMP.dialog = null;
+      const s = campSlot();
+      if (d.key && !s.dialogos_vistos.includes(d.key)) { s.dialogos_vistos.push(d.key); CS.save(); }
+      d.then();
+    } else campRender();
+  }
+  function campCard(act, key, then, kind) {
+    CAMP.card = { act, key, then, kind: kind || 'inicio', t0: performance.now() };
+    if (kind === 'completo') PERFIL.syncCampaign(CS.slots, campActsForSync()); // logro del acto + armas/mejoras al perfil
+    campGo('card');
+  }
+  function campCardEnd() {
+    const c = CAMP.card;
+    if (!c) return;
+    CAMP.card = null;
+    const s = campSlot();
+    if (c.key && !s.dialogos_vistos.includes(c.key)) { s.dialogos_vistos.push(c.key); CS.save(); }
+    c.then();
+  }
+  function campPlay(lid, fromCheckpoint, intro = true) {
+    const slot = campSlot(), lv = campLevel(lid);
+    if (!lv || !campUnlocked(lid)) return;
+    let phase = 0, stats = {};
+    const cp = slot.checkpoint;
+    if (fromCheckpoint && cp && cp.nivel === lid) {
+      phase = cp.fase | 0; stats = Object.assign({}, cp.stats || {});
+      if (phase < 0 || phase >= lv.fases.length) { phase = 0; stats = {}; }
+      if (phase === 0) stats = {};
+    } else slot.checkpoint = { nivel: lid, fase: 0, stats: {} };
+    slot.nivel_actual = lid;
+    CAMP.novelty = [];
+    if (lv.desbloquea_al_inicio) for (const m of (lv.desbloquea || {}).mecanicas || []) if (!slot.mecanicas.includes(m)) { slot.mecanicas.push(m); CAMP.novelty.push(m); }
+    CS.save();
+    useMap(lv.mapa);
+    const lines = (lv.dialogos || {}).intro || [];
+    const skipSeen = slot.ajustes.saltear_dialogos_vistos !== false;
+    const go = () => {
+      if (phase === 0 && intro && lines.length && !(skipSeen && slot.dialogos_vistos.includes(lid))) campDialog(lines, lid, () => campBegin(lid, phase, stats));
+      else campBegin(lid, phase, stats);
+    };
+    const act = campActOf(lid), cardKey = `acto:${act.id}`;
+    if (act.niveles[0].id === lid && phase === 0 && intro && !(skipSeen && slot.dialogos_vistos.includes(cardKey))) campCard(act, cardKey, go);
+    else go();
+  }
+  function campBegin(lid, phase, stats) {
+    const lv = campLevel(lid);
+    useMap(lv.mapa);
+    NET.myId = 0;
+    initRound([{ id: 0, name: G.name, lo: campLoadout() }]);
+    G.camp = new CampRun(CAMP.slotI, lid, phase, stats);
+    PERFIL.armorUsed();
+    const last = HG.WEAPON_IDS.indexOf(campSlot().ultima_arma);
+    G.myWeapon = G.player.weapon = G.camp.weapons.includes(last) ? last : 0;
+    G.camp.setupWings();
+    G.camp.startPhase(phase);
+    for (const m of CAMP.novelty) G.popup(W / 2, H / 2 + 60, campTxt('mecanica_nueva', { nombre: ((CD.mecanicas[m] || {}).nombre || m).split(' (')[0] }), YELLOW, true);
+    setState('play');
+  }
+  function campFail(reason) {
+    if (!G.camp || (G.state !== 'play' && G.state !== 'pause')) return;
+    CAMP.failReason = reason;
+    G.camp.log.push(`FALLO ${G.camp.lid}: ${reason}`);
+    CS.save();
+    campGo('fail');
+  }
+  function campRetry() {
+    const cr = G.camp;
+    if (!cr) return;
+    cr.attempts++;
+    if (cr.pi > 0) cr.bonusVoid = true; // desde un checkpoint se pierden los bonus de corrida completa
+    else { cr.timeDone = 0; cr.livesLost = 0; cr.wingsDown = 0; cr.lucesExtra = cr.lucesStart; cr.coreFrac = null; cr.bossTime = null; }
+    const keepW = G.myWeapon;
+    initRound([{ id: 0, name: G.name, lo: campLoadout() }]);
+    G.myWeapon = G.player.weapon = cr.weapons.includes(keepW) ? keepW : 0;
+    cr.radio.cur = null; cr.radio.queue = [];
+    cr.dashCd = cr.dashT = 0; cr.capsules = []; cr.ghosts = [];
+    cr.setupWings();
+    cr.startPhase(cr.pi);
+    setState('play');
+  }
+  function campExitToHub() {
+    CS.save();
+    if (G.camp) CAMP.sel = G.camp.lid;
+    G.camp = null;
+    initRound();
+    campOpenHub(CAMP.slotI);
+  }
+  function campLevelComplete() {
+    const cr = G.camp;
+    if (!cr) return;
+    const slot = cr.slot, lv = cr.level, lid = cr.lid, totalT = cr.timeDone;
+    const prev = slot.completados[lid], rec = lv.recompensa || {}, base = rec.luces | 0;
+    const lucesBase = !prev ? base : (base > 0 ? Math.max(1, Math.floor(base * CAMP_REPLAY_FRAC)) : 0);
+    const had = new Set(prev ? prev.bonus : []), rows = [];
+    let lucesBonus = 0;
+    for (const b of rec.bonus || []) {
+      const tipo = String(b.tipo || ''), val = b.valor;
+      let ok = false;
+      if (cr.bonusVoid && CAMP_RUN_BONUS.includes(tipo)) ok = false;
+      else if (tipo === 'sin_perder_vidas') ok = cr.livesLost === 0;
+      else if (tipo === 'tiempo_max_s') ok = totalT <= +val;
+      else if (tipo === 'jefe_tiempo_max_s') ok = cr.bossTime !== null && cr.bossTime <= +val;
+      else if (tipo === 'nucleo_mas_de') ok = cr.coreFrac !== null && cr.coreFrac >= +val;
+      else if (tipo === 'alas_sin_caer') ok = cr.wingsDown === 0;
+      const desc = campTxt(`bonus.${tipo}`, { valor: val, pct: typeof val === 'number' ? Math.round(val * 100) : 0, nombre: cr.nucleoNombre });
+      const gain = ok && !had.has(tipo) ? b.luces | 0 : 0;
+      lucesBonus += gain;
+      rows.push({ desc, ok, gain, had: had.has(tipo) });
+      if (ok) had.add(tipo);
+    }
+    const unlocks = [], des = lv.desbloquea || {};
+    for (const a of des.armas || []) if (HG.WEAPON_IDS.includes(a) && !slot.armas.includes(a)) { slot.armas.push(a); unlocks.push([campTxt('arma_nueva', { arma: HG.WEAPON_NAMES[HG.WEAPON_IDS.indexOf(a)] }), ORANGE]); }
+    for (const m of des.mecanicas || []) if (!slot.mecanicas.includes(m)) { slot.mecanicas.push(m); unlocks.push([campTxt('mecanica_nueva', { nombre: ((CD.mecanicas[m] || {}).nombre || m).split(' (')[0] }), YELLOW]); }
+    const regIds = (CD.registros || []).map((r) => r.id);
+    let newRegs = false;
+    for (const r of des.registros || []) if (regIds.includes(r) && !slot.registros.includes(r)) { slot.registros.push(r); newRegs = true; }
+    if (newRegs) { unlocks.push([campTxt('registro_guardado'), [159, 180, 255]]); unlocks.push([campTxt('registro_proximamente'), DIM]); }
+    for (const g of lv.guerra || []) if (g.sector && g.estado) slot.guerra[g.sector] = g.estado;
+    const best = !prev || !prev.mejor_tiempo_s ? totalT : Math.min(prev.mejor_tiempo_s, totalT);
+    slot.completados[lid] = { mejor_tiempo_s: Math.round(best * 100) / 100, bonus: [...had].sort() };
+    const total = lucesBase + lucesBonus + cr.lucesExtra;
+    slot.luces += total;
+    slot.checkpoint = null;
+    const ids = CD.niveles_ids.length ? CD.niveles_ids : campPlayableIds(), k = ids.indexOf(lid);
+    const nxt = k >= 0 && k < ids.length - 1 ? ids[k + 1] : lid;
+    slot.nivel_actual = nxt;
+    CAMP.sel = campUnlocked(nxt) ? nxt : lid;
+    CS.save();
+    PERFIL.syncCampaign(CS.slots, campActsForSync()); // armas ganadas -> desbloqueadas en todos los modos (queda en el perfil)
+    const act = campActOf(lid);
+    CAMP.done = { lid, titulo: lv.titulo, tiempo: totalT, base: lucesBase, replay: !!prev, bonus: rows, extra: cr.lucesExtra, total, unlocks,
+      vidas: cr.livesLost, intentos: cr.attempts, jefe: cr.bossTime, actoNuevo: !prev && act.niveles.every((x) => x.id in slot.completados) };
+    refreshMenuHangar();
+    campGo('done');
+  }
+  function campDoneContinue() {
+    const cr = G.camp, lv = cr ? cr.level : {}, lid = cr ? cr.lid : '', info = CAMP.done || {};
+    const slot = campSlot(), skip = slot.ajustes.saltear_dialogos_vistos !== false;
+    const act = campActOf(lid), last = act.niveles.length && act.niveles[act.niveles.length - 1].id === lid;
+    const after = () => { G.camp = null; initRound(); campOpenHub(CAMP.slotI); };
+    const completo = () => (last && info.actoNuevo ? campCard(act, '', after, 'completo') : after());
+    const cierre = () => {
+      const lines = last ? act.escena_cierre || [] : [], ck = `cierre-${act.id}`;
+      if (lines.length && !(skip && slot.dialogos_vistos.includes(ck))) campDialog(lines, ck, completo); else completo();
+    };
+    const outro = (lv.dialogos || {}).outro || [], key = `${lid}>fin`;
+    if (outro.length && !(skip && slot.dialogos_vistos.includes(key))) campDialog(outro, key, cierre); else cierre();
+  }
+  function campBuy(mid) {
+    const slot = campSlot(), m = campMejora(mid);
+    if (!m || !(m.desde in slot.completados)) return;
+    const lvl = campMejoraLevel(slot, mid);
+    if (lvl >= m.niveles.length) return;
+    const cost = m.niveles[lvl].costo;
+    if (slot.luces < cost) { toast(campTxt('taller_sin_luces')); return; }
+    slot.luces -= cost;
+    slot.mejoras[mid] = lvl + 1;
+    CS.save();
+    PERFIL.unlock('primera_mejora'); // «Manos de Mecha»: Hangar o Taller
+    PERFIL.syncCampaign(CS.slots, campActsForSync()); // mismo nivel en el Hangar (se guarda en el perfil)
+    toast(`${m.nombre}: ${lvl + 1}/${m.niveles.length}`);
+    campRender();
+  }
+
+  // ---- pantallas HTML de la campaña ----
+  const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  const campColor = (c) => `rgb(${c[0]},${c[1]},${c[2]})`;
+  const bonusTxt = (b, nombre) => campTxt(`bonus.${b.tipo}`, { valor: b.valor, pct: typeof b.valor === 'number' ? Math.round(b.valor * 100) : 0, nombre: nombre || '' });
+  function campLevelStatus(slot, lv) {
+    const c = slot.completados[lv.id], nb = ((lv.recompensa || {}).bonus || []).length;
+    if (c) return `✓ ${campFmtTime(c.mejor_tiempo_s)} · bonus ${c.bonus.length}/${nb}`;
+    return campUnlocked(lv.id) ? '' : '🔒';
+  }
+  function campRenderSlots() {
+    let h = `<h2>${esc(campTxt('menu_campania').toUpperCase())}</h2><p class="sub">${esc(CD.titulo || '')} · ${esc(CD.subtitulo || '')}</p>`;
+    if (CS.warning) h += `<p class="hg-warn">${esc(CS.warning)}</p>`;
+    h += '<div class="camp-slots">';
+    for (let i = 0; i < CAMP_SLOTS; i++) {
+      const s = CS.slots[i];
+      h += `<div class="camp-slot" data-slot="${i}"><div class="camp-slot-h">${esc(campTxt('ranura', { n: i + 1 }))}</div>`;
+      if (!s) h += `<p class="dim">${esc(campTxt('ranura_vacia'))}</p><button type="button" class="big" data-act="new" data-i="${i}">${esc(campTxt('nueva_campania').toUpperCase())}</button>`;
+      else {
+        const lv = campLevel(s.nivel_actual), act = campActOf(s.nivel_actual), n = Object.keys(s.completados).length;
+        h += `<p><b>${esc(campTxt('acto', { n: act.id, titulo: act.titulo }))}</b><br>${lv ? `${esc(lv.id)} · ${esc(lv.titulo)}` : esc(campTxt('fin_etapa_a'))}</p>`;
+        h += `<p class="dim">${n}/${campPlayableIds().length} niveles · ${s.luces} ✦ · ${campFmtTime(s.tiempo_jugado_s)}${s.checkpoint && s.checkpoint.fase > 0 ? ' · checkpoint' : ''}</p>`;
+        if (CAMP.confirm === i) h += `<p class="yellow">${esc(campTxt('confirmar_borrar'))}</p><div class="row"><button type="button" data-act="del-yes" data-i="${i}" class="mid">BORRAR</button><button type="button" data-act="del-no" class="mid">NO</button></div>`;
+        else h += `<button type="button" class="big" data-act="cont" data-i="${i}">${esc(campTxt('continuar').toUpperCase())}</button><div class="row"><button type="button" class="mid" data-act="hub" data-i="${i}">${esc(campTxt('elegir_nivel'))}</button><button type="button" class="mid" data-act="del" data-i="${i}">${esc(campTxt('borrar_ranura'))}</button></div>`;
+      }
+      h += '</div>';
+    }
+    return h + `</div><p class="dim small-note">Se guarda en este navegador (también en el celu): niveles, bonus, Luces ✦ del Taller, mejoras y diálogos vistos. Las armas que ganás quedan desbloqueadas en todo el juego.</p><button type="button" data-act="menu">${esc(campTxt('volver'))}</button>`;
+  }
+  function campRenderHub() {
+    const slot = campSlot(), act = CD.actos[CAMP.act] || CD.actos[0], playable = CAMP_PLAYABLE.includes(act);
+    let h = `<div class="camp-head"><h2>${esc(campTxt('ranura', { n: CAMP.slotI + 1 }).toUpperCase())}</h2><div class="hg-luces">${slot.luces} ✦</div></div><div class="camp-acts">`;
+    CD.actos.forEach((a, i) => {
+      const ok = CAMP_PLAYABLE.includes(a), done = ok && a.niveles.every((l) => l.id in slot.completados);
+      h += `<button type="button" data-act="acto" data-i="${i}" class="${i === CAMP.act ? 'on' : ''}${ok ? '' : ' locked'}" title="${esc(a.titulo)}">${done ? '★ ' : ok ? '' : '🔒'}${esc(a.id)}</button>`;
+    });
+    h += `</div><h3>${esc(campTxt('acto', { n: act.id, titulo: act.titulo }))}</h3><p class="dim">${esc(act.subtitulo || '')}</p>`;
+    if (!playable) h += `<p class="yellow">${esc(campTxt('proximamente'))}: ${esc(campTxt('acto_bloqueado'))}.</p>`;
+    else {
+      if (campEndOfContent()) h += `<p class="yellow">${esc(campTxt('fin_etapa_a'))}</p>`;
+      h += '<ul class="camp-levels">';
+      for (const lv of act.niveles) {
+        const un = campUnlocked(lv.id);
+        h += `<li><button type="button" data-act="sel" data-lid="${esc(lv.id)}" class="${lv.id === CAMP.sel ? 'on' : ''}${un ? '' : ' locked'}"><b>${esc(lv.id)}</b> ${esc(lv.titulo)} <small>${esc(campLevelStatus(slot, lv))}</small></button></li>`;
+      }
+      h += '</ul>';
+      const lv = campLevel(CAMP.sel);
+      if (lv && act.niveles.includes(lv)) {
+        const c = slot.completados[lv.id], un = campUnlocked(lv.id), base = (lv.recompensa || {}).luces | 0;
+        h += `<div class="camp-detail"><p>${esc(lv.resumen || '')}</p><ul class="camp-bonus"><li>${c ? `Repetir: +${Math.max(1, Math.floor(base * CAMP_REPLAY_FRAC))} ✦` : `Recompensa: +${base} ✦`}</li>`;
+        for (const b of (lv.recompensa || {}).bonus || []) {
+          const got = c && c.bonus.includes(b.tipo);
+          h += `<li class="${got ? 'got' : ''}">${got ? '✓' : '○'} ${esc(bonusTxt(b))} · +${b.luces} ✦</li>`;
+        }
+        h += `</ul></div><button type="button" class="big" data-act="play" ${un ? '' : 'disabled'}>${esc(un ? campTxt('jugar').toUpperCase() : campTxt('nivel_bloqueado'))}</button>`;
+        if (un && slot.dialogos_vistos.includes(lv.id)) h += `<button type="button" data-act="intro">${esc(campTxt('ver_intro'))}</button>`;
+      }
+    }
+    return h + `<div class="row"><button type="button" class="mid" data-act="taller">${esc(campTxt('taller').toUpperCase())}</button><button type="button" class="mid" data-act="slots">${esc(campTxt('volver').toUpperCase())}</button></div>`;
+  }
+  function campRenderTaller() {
+    const slot = campSlot(), list = CD.mejoras.filter((m) => m.desde in slot.completados);
+    let h = `<div class="camp-head"><h2>${esc(campTxt('taller').toUpperCase())}</h2><div class="hg-luces">${slot.luces} ✦</div></div>`;
+    h += `<p class="dim">${esc(campTxt('taller_saldo', { n: slot.luces }))}. Las mejoras que también están en el Hangar suben en los dos.</p>`;
+    if (!list.length) h += `<p>${esc(campTxt('taller_vacio'))}</p>`;
+    h += '<ul class="camp-taller">';
+    for (const m of list) {
+      const lvl = campMejoraLevel(slot, m.id), mx = m.niveles.length, max = lvl >= mx, cost = max ? 0 : m.niveles[lvl].costo, poor = slot.luces < cost;
+      h += `<li><div><b>${esc(m.nombre)}</b> <small>${lvl}/${mx}</small><br><small class="dim">${esc(m.desc)}</small></div>`;
+      h += `<button type="button" data-act="buy" data-mid="${esc(m.id)}" ${max || poor ? 'disabled' : ''}>${esc(max ? campTxt('taller_max') : poor ? `${cost} ✦` : campTxt('taller_comprar', { costo: cost }))}</button></li>`;
+    }
+    return h + `</ul><button type="button" data-act="hubback">${esc(campTxt('volver'))}</button>`;
+  }
+  function campRender() {
+    const el = $('camp-body');
+    if (!el) return;
+    const sc = CAMP.screen;
+    $('camp').dataset.screen = sc;
+    let h = '';
+    if (sc === 'slots') h = campRenderSlots();
+    else if (sc === 'hub') h = campRenderHub();
+    else if (sc === 'taller') h = campRenderTaller();
+    else if (sc === 'dialog') {
+      const d = CAMP.dialog, ln = d.lines[d.i], ch = campChar(ln.quien);
+      h += `<div class="camp-dialog" data-act="next"><div class="camp-portrait" style="--pc:${campColor(ch.color)}">${esc(ch.nombre.slice(0, 1))}</div>`;
+      h += `<div class="camp-dtext"><div class="camp-who" style="color:${campColor(ch.color)}">${esc(ch.nombre)}</div><p>${esc(ln.texto)}</p></div></div>`;
+      h += `<div class="row"><button type="button" class="mid" data-act="skip">${esc(campTxt('dialogo_saltear'))}</button><button type="button" class="mid" data-act="next">${esc(campTxt('dialogo_siguiente'))} (${d.i + 1}/${d.lines.length})</button></div>`;
+      h += `<p class="dim small-note">${esc(input.mode === 'touch' ? campTxt('dialogo_ayuda_tactil') : campTxt('dialogo_ayuda_teclado'))}</p>`;
+    } else if (sc === 'card') {
+      const c = CAMP.card, a = c.act;
+      h += `<div class="camp-card" data-act="card">`;
+      if (c.kind === 'completo') h += `<div class="camp-card-n">${esc(campTxt('acto_completo', { n: a.id }))}</div><h2>${esc(a.titulo)}</h2>`;
+      else h += `<div class="camp-card-n">${esc(campTxt('acto_tarjeta', { n: a.id }))}</div><h2>${esc(a.titulo)}</h2><p>${esc(a.subtitulo || '')}</p>`;
+      h += `<p class="dim">${esc(input.mode === 'touch' ? campTxt('dialogo_ayuda_tactil') : 'Enter o clic: seguir')}</p></div>`;
+    } else if (sc === 'done') {
+      const d = CAMP.done;
+      h += `<h2 class="gold-h">${esc(campTxt('nivel_completo').toUpperCase())}</h2><p><b>${esc(d.lid)} · ${esc(d.titulo)}</b></p>`;
+      h += `<p class="dim">Tiempo ${campFmtTime(d.tiempo)} · vidas perdidas ${d.vidas} · intentos ${d.intentos}${d.jefe !== null ? ` · jefe ${campFmtTime(d.jefe)}` : ''}</p><ul class="camp-bonus">`;
+      h += `<li>${d.replay ? 'Repetido (25%)' : 'Recompensa'}: +${d.base} ✦</li>`;
+      for (const r of d.bonus) h += `<li class="${r.ok ? 'got' : ''}">${r.ok ? '✓' : '✗'} ${esc(r.desc)}${r.gain ? ` · +${r.gain} ✦` : r.had ? ' (ya lo tenías)' : ''}</li>`;
+      if (d.extra) h += `<li>Power-ups amarillos: +${d.extra} ✦</li>`;
+      h += `</ul><p class="yellow"><b>${esc(campTxt('luces_ganadas', { n: d.total }))}</b> · ${esc(campTxt('taller_saldo', { n: campSlot().luces }))}</p>`;
+      for (const [t, c] of d.unlocks) h += `<p style="color:${campColor(c)}"><b>${esc(t)}</b></p>`;
+      h += `<button type="button" class="big" data-act="donecont">${esc(campTxt('continuar').toUpperCase())}</button>`;
+    } else if (sc === 'fail') {
+      h += `<h2 style="color:${campColor(RED)}">${esc(campTxt('fallo_titulo'))}</h2><p>${esc(CAMP.failReason)}</p>`;
+      if (G.camp && G.camp.pi > 0) h += `<p class="dim">Desde el checkpoint: ${esc(campTxt('bonus_perdido').toLowerCase())} (sin perder vidas / tiempo).</p>`;
+      h += `<button type="button" class="big" data-act="retry">${esc(campTxt('fallo_reintentar').toUpperCase())}</button><button type="button" data-act="failhub">${esc(campTxt('pausa_salir'))}</button>`;
+    }
+    el.innerHTML = h;
+  }
+  function campClick(e) {
+    const b = e.target.closest('[data-act]');
+    if (!b || b.disabled) return;
+    e.preventDefault();
+    const a = b.dataset.act, i = +b.dataset.i;
+    if (a === 'new') campNew(i);
+    else if (a === 'cont') campContinue(i);
+    else if (a === 'hub') { CAMP.sel = ''; campOpenHub(i); }
+    else if (a === 'del') { CAMP.confirm = i; campRender(); }
+    else if (a === 'del-yes') campDelete(i);
+    else if (a === 'del-no') { CAMP.confirm = -1; campRender(); }
+    else if (a === 'menu') toMenu();
+    else if (a === 'acto') {
+      CAMP.act = i;
+      const ac = CD.actos[i];
+      if (CAMP_PLAYABLE.includes(ac) && !ac.niveles.some((l) => l.id === CAMP.sel)) CAMP.sel = ac.niveles[0].id;
+      campRender();
+    } else if (a === 'sel') { CAMP.sel = b.dataset.lid; campRender(); }
+    else if (a === 'play') campPlay(CAMP.sel);
+    else if (a === 'intro') { const lv = campLevel(CAMP.sel); useMap(lv.mapa); campDialog((lv.dialogos || {}).intro || [], '', () => campGo('hub')); }
+    else if (a === 'taller') campGo('taller');
+    else if (a === 'slots') { CAMP.confirm = -1; campGo('slots'); }
+    else if (a === 'buy') campBuy(b.dataset.mid);
+    else if (a === 'hubback') campGo('hub');
+    else if (a === 'next') campDialogNext(false);
+    else if (a === 'skip') campDialogNext(true);
+    else if (a === 'card') campCardEnd();
+    else if (a === 'donecont') campDoneContinue();
+    else if (a === 'retry') campRetry();
+    else if (a === 'failhub') campExitToHub();
+  }
+  function campKey(e) { // teclas en las pantallas de la campaña
+    const c = e.code, sc = CAMP.screen;
+    if (sc === 'dialog') { if (c === 'Escape') campDialogNext(true); else if (c === 'Enter' || c === 'Space' || c === 'NumpadEnter') campDialogNext(false); return true; }
+    if (sc === 'card') { if (['Enter', 'Space', 'Escape', 'NumpadEnter'].includes(c)) campCardEnd(); return true; }
+    if (c === 'Escape') {
+      if (sc === 'slots') toMenu(); else if (sc === 'hub') campGo('slots'); else if (sc === 'taller') campGo('hub'); else if (sc === 'fail') campExitToHub();
+      return true;
+    }
+    if (c === 'Enter' || c === 'NumpadEnter') {
+      if (sc === 'done') campDoneContinue(); else if (sc === 'fail') campRetry(); else if (sc === 'hub' && campUnlocked(CAMP.sel)) campPlay(CAMP.sel);
+      return true;
+    }
+    return false;
+  }
+  setInterval(() => { // el cartel del acto pasa solo a los 4 s
+    if (G.state === 'camp' && CAMP.screen === 'card' && CAMP.card && performance.now() - CAMP.card.t0 > 4000) campCardEnd();
+  }, 250);
+
+  // ---- dibujo en juego ----
+  function campDrawUnder() {
+    const cr = G.camp;
+    if (!cr) return;
+    const t = bg.pulse || 0;
+    for (const r of cr.rings) {
+      const col = r.done ? LIME : CYAN;
+      additive(() => glow(r.x, r.y, r.r * 1.6, col, r.done ? 0.5 : 0.3));
+      ctx.strokeStyle = rgb(col, 0.55); ctx.lineWidth = 2; ctx.setLineDash([6, 6]);
+      circle(r.x, r.y, r.r); ctx.stroke(); ctx.setLineDash([]);
+      if (r.fill > 0) { ctx.strokeStyle = rgb(col); ctx.lineWidth = 5; ctx.beginPath(); ctx.arc(r.x, r.y, r.r - 4, -Math.PI / 2, -Math.PI / 2 + TAU * r.fill); ctx.stroke(); }
+      ctx.fillStyle = rgb(col, r.done ? 0.9 : 0.6); circle(r.x, r.y, 6); ctx.fill();
+    }
+    const c = cr.core;
+    if (c) {
+      const frac = c.hp / Math.max(1, c.max), col = frac <= 0.3 ? RED : [201, 164, 106];
+      additive(() => glow(c.x, c.y, c.r * 3, col, 0.7));
+      ctx.fillStyle = rgb(c.flash > 0 ? WHITE : col, 0.35); circle(c.x, c.y, c.r); ctx.fill();
+      ctx.strokeStyle = rgb(c.flash > 0 ? WHITE : col); ctx.lineWidth = 3; ctx.stroke();
+      ctx.strokeStyle = rgb(WHITE, 0.8); ctx.lineWidth = 2; circle(c.x, c.y, c.r * 0.45 * (1 + 0.1 * Math.sin(t * 6))); ctx.stroke();
+      const bw = 2.2 * c.r, bx = c.x - bw / 2, by = c.y - c.r - 20;
+      ctx.fillStyle = 'rgb(25,20,40)'; ctx.fillRect(bx, by, bw, 6);
+      if (frac > 0) { ctx.fillStyle = rgb(frac <= 0.3 ? RED : LIME); ctx.fillRect(bx, by, Math.max(1, bw * frac), 6); }
+      ctx.strokeStyle = rgb(WHITE, 0.6); ctx.lineWidth = 1; ctx.strokeRect(bx - 1, by - 1, bw + 2, 8);
+      text(c.nombre, c.x, by - 16, 12, WHITE, { align: 'center', alpha: 0.85 });
+    }
+    const p = G.player;
+    for (const gh of cr.ghosts) {
+      const k = gh[3] / 0.22, rr = [p.r + 5, p.r, p.r * 0.45, p.r];
+      ctx.strokeStyle = rgb(p.color, 0.5 * k); ctx.lineWidth = 2;
+      poly([0, 2.5, Math.PI, -2.5].map((a, i) => [gh[0] + Math.cos(gh[2] + a) * rr[i], gh[1] + Math.sin(gh[2] + a) * rr[i]]));
+      ctx.stroke();
+    }
+  }
+  function campDrawOver() {
+    const cr = G.camp;
+    if (!cr) return;
+    for (const w of cr.wings) {
+      if (w.down > 0 || (w.flash > 0 && Math.floor(w.flash * 14) % 2 === 0)) continue;
+      additive(() => glow(w.x, w.y, w.r * 2.6, w.color, 0.6));
+      const ca = Math.cos(w.ang), sa = Math.sin(w.ang), P = (fx, fy) => [w.x + (ca * fx - sa * fy) * w.r, w.y + (sa * fx + ca * fy) * w.r];
+      poly([P(1.4, 0), P(-0.9, 0.9), P(-0.5, 0), P(-0.9, -0.9)]);
+      ctx.fillStyle = rgb(w.color, 0.45); ctx.fill(); ctx.strokeStyle = rgb(w.hp <= 1 ? RED : w.color); ctx.lineWidth = 2; ctx.stroke();
+      text(w.name, w.x, w.y - 26, 11, w.color, { align: 'center', alpha: 0.8 });
+    }
+    for (const c of cr.capsules) { ctx.fillStyle = rgb(c[5], 1 - c[4] / 2.6); circle(c[0], c[1], 5); ctx.fill(); }
+    const p = G.player;
+    if (cr.rings.length && p.hp > 0) { // flechas a los anillos que faltan
+      const k = 0.6 + 0.4 * Math.sin((bg.pulse || 0) * TAU * 2);
+      for (const r of cr.rings) {
+        if (r.done) continue;
+        const dx = r.x - p.x, dy = r.y - p.y, d = Math.hypot(dx, dy);
+        if (d < r.r + 70) continue;
+        const nx = dx / d, ny = dy / d, cx = p.x + nx * 40, cy = p.y + ny * 40;
+        poly([[cx + nx * 9, cy + ny * 9], [cx - nx * 5 - ny * 6, cy - ny * 5 + nx * 6], [cx - nx * 5 + ny * 6, cy - ny * 5 - nx * 6]]);
+        ctx.fillStyle = rgb(LIME, k); ctx.fill();
+      }
+    }
+  }
+  function campDrawHud(ty) {
+    const cr = G.camp;
+    text(cr.hudLabel(), 16, ty, 16, PINK, { bold: true });
+    ctx.fillStyle = 'rgba(255,255,255,0.12)'; ctx.fillRect(16, ty + 22, 200, 6);
+    ctx.fillStyle = rgb(PINK); ctx.fillRect(16, ty + 22, 200 * cr.progress(), 6);
+    text(`${cr.lid} · fase ${cr.pi + 1}/${cr.phases.length}`, 16, ty + 34, 12, DIM);
+    if (cr.mecs.has('impulso')) {
+      const rdy = cr.dashCd <= 0, k = 1 - cr.dashCd / Math.max(0.01, cr.dashCdMax);
+      text(rdy ? 'IMPULSO LISTO' : 'IMPULSO', 16, ty + 52, 12, rdy ? CYAN : DIM, { bold: rdy });
+      ctx.fillStyle = 'rgba(255,255,255,0.12)'; ctx.fillRect(120, ty + 56, 80, 5);
+      ctx.fillStyle = rgb(CYAN); ctx.fillRect(120, ty + 56, 80 * k, 5);
+    }
+    const r = cr.radio.cur;
+    if (r) { // radio: caja abajo al centro (no pausa el juego)
+      const ch = campChar(r[0]), a = clamp(Math.min(r[2], r[3] - r[2]) / 0.25, 0, 1), bw = 560, bx = W / 2 - bw / 2, by = H - 132;
+      ctx.globalAlpha = a;
+      ctx.fillStyle = 'rgba(10,14,30,0.86)'; ctx.fillRect(bx, by, bw, 64);
+      ctx.strokeStyle = rgb(ch.color, 0.9); ctx.lineWidth = 2; ctx.strokeRect(bx, by, bw, 64);
+      ctx.fillStyle = rgb(ch.color, 0.3); circle(bx + 30, by + 32, 20); ctx.fill(); ctx.strokeStyle = rgb(ch.color); ctx.stroke();
+      text(ch.nombre.slice(0, 1), bx + 30, by + 32, 18, ch.color, { align: 'center', base: 'middle', bold: true });
+      text(ch.nombre, bx + 60, by + 7, 13, ch.color, { bold: true });
+      ctx.font = `14px ${FONT}`;
+      let line = '', ly = by + 26;
+      for (const wd of r[1].split(' ')) {
+        if (line && ctx.measureText(line + wd).width > bw - 76) { text(line, bx + 60, ly, 14, WHITE); ly += 17; line = ''; }
+        line += wd + ' ';
+      }
+      if (line) text(line, bx + 60, ly, 14, WHITE);
+      ctx.globalAlpha = 1;
+    }
+  }
+  // botón IMPULSO (táctil): a la izquierda del joystick de disparo
+  function dashButton() { const m = 30 + STICK_R; return { x: view.w - m - STICK_R - 56, y: view.h - 58, r: 32 }; }
+
+  // ---- guardado: otra pestaña compró o avanzó → recargar (que una pestaña vieja no pise lo nuevo) ----
+  addEventListener('storage', (e) => {
+    if (e.key === 'neonDodge.perfil' && PERFIL.reload) { PERFIL.reload(); refreshMenuHangar(); }
+    if (e.key === CAMP_KEY && !G.camp) { CS.load(); if (G.state === 'camp') campRender(); }
+  });
+  try { if (navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(() => {}); } catch (e) { /* sin API */ }
 
   // ---------------------------------------------------------------------------
   // Loop principal (requestAnimationFrame, ~60 fps)
@@ -3306,7 +4413,7 @@
   if (PERFIL.warning) toast(PERFIL.warning);
   // ---- aviso de novedades: una sola vez por versión, al entrar (no con ?perfil=off ni con link de invitación) ----
   (function novedades() {
-    const NOV_VER = '5.1', KEY = 'neonDodge.novedades', el = $('novedades');
+    const NOV_VER = '5.2', KEY = 'neonDodge.novedades', el = $('novedades');
     const q = new URLSearchParams(location.search);
     if (!el || !PERFIL.active || q.get('novedades') === 'off' || salaParam) return;
     try { if (localStorage.getItem(KEY) === NOV_VER) return; } catch (e) { /* sin almacenamiento: se muestra igual */ }
@@ -3333,7 +4440,7 @@
 
   // Ganchos para pruebas automáticas / consola (no afectan el juego normal)
   window.NeonDodge = {
-    G, NET, C, view, startGame, startBoss, toMenu, togglePause, hostStart, PERFIL, HG, HGUI, openHangar, makePlayer,
+    G, NET, C, view, PERFIL, startGame, startBoss, CS, CAMP, CD, campOpen, campNew, campContinue, campPlay, campRetry, campExitToHub, campOpenHub, campDialogNext, campCardEnd, campDoneContinue, campBuy, campRender, dashButton, toMenu, togglePause, hostStart, PERFIL, HG, HGUI, openHangar, makePlayer,
     setGod(v) { G.god = !!v; },
     get state() { return G.state; },
     get mode() { return NET.mode; },

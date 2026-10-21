@@ -18,6 +18,7 @@
   const ROUND_LUCES_MAX = 150;
   const MG_SPREAD_DEG = 6, RPG_RADIUS = 90;       // valores base de la web (game.js)
   const STORAGE_KEY = 'neonDodge.perfil';
+  const PERFIL_VERSION = 2; // v2 (campaña web): armas_campania, contadores.esquivas y logros de la campaña. Un perfil v1 se migra solo.
 
   // Mejoras que la web puede aplicar (10 de las 14 de la compu; las 4 que dependen de campaña/Impulso quedan afuera).
   // Mismos ids, niveles, costos y valores que la compu.
@@ -79,6 +80,10 @@
     primera_mejora: { nombre: 'Manos de Mecha', desc: 'Comprá tu primera mejora en el Hangar.', nivel: 'bronce', cat: 'hangar' },
     todo_al_maximo: { nombre: 'Todo al máximo', desc: 'Subí las 10 mejoras al máximo.', nivel: 'oro', cat: 'hangar' },
     vestida_para_la_guerra: { nombre: 'Vestida para la guerra', desc: 'Jugá una partida con cada una de las 4 armaduras.', nivel: 'plata', cat: 'hangar' },
+    // v5.2 web: campaña (mismos ids, textos y niveles que la compu; solo los actos que la web tiene)
+    campania_acto1: { nombre: 'Chispas', desc: 'Completá «Chispas» en la campaña.', nivel: 'bronce', cat: 'campania' },
+    campania_acto2: { nombre: 'Los Halcones', desc: 'Completá «Los Halcones» en la campaña.', nivel: 'bronce', cat: 'campania' },
+    esquiva_neon: { nombre: 'Esquiva neón', desc: 'Atravesá 50 balas o enemigos con el Impulso (campaña).', nivel: 'plata', cat: 'combate' },
     secreto_1: { nombre: 'Tres de un saque', desc: 'Apagá 3 enemigos con un solo cohete.', nivel: 'secreto', cat: 'combate', secreto: true },
     secreto_2: { nombre: 'Ni un rasguño', desc: 'Derrotá a un jefe sin que te toque durante la pelea.', nivel: 'secreto', cat: 'jefes', secreto: true },
   };
@@ -142,8 +147,9 @@
   function codigoHash(t) { return sha256(CODIGO_SAL + codigoNorm(t)); }
 
   function perfilNew() {
-    return { version: 1, luces: 0, mejoras: {}, licencias: [], armaduras: ['sin_armadura'], armadura: 'sin_armadura', arma_inicial: 'pistola',
-      logros: {}, logros_nuevos: [], contadores: { apagados: 0, apagados_rpg: 0 }, armaduras_usadas: [], luces_ganadas_total: 0, codigos: [] };
+    return { version: PERFIL_VERSION, luces: 0, mejoras: {}, licencias: [], armas_campania: [], armaduras: ['sin_armadura'], armadura: 'sin_armadura',
+      arma_inicial: 'pistola', logros: {}, logros_nuevos: [], contadores: { apagados: 0, apagados_rpg: 0, esquivas: 0 }, armaduras_usadas: [],
+      luces_ganadas_total: 0, codigos: [] };
   }
 
   // Lo desconocido se ignora, lo que falta se completa, los números se acotan (igual que la compu).
@@ -157,12 +163,13 @@
     }
     const list = (v, allowed, base) => (Array.isArray(v) ? [...new Set(v.map(String).filter((x) => allowed.includes(x)).concat(base))].sort() : base.slice());
     out.licencias = list(d.licencias, WEAPON_IDS.slice(1), []);
+    out.armas_campania = list(d.armas_campania, WEAPON_IDS.slice(1), []); // armas ganadas en la campaña (v1: no existía)
     out.armaduras = list(d.armaduras, ARMOR_IDS, ['sin_armadura']);
     out.armaduras_usadas = list(d.armaduras_usadas, ARMOR_IDS.slice(1), []);
     const a = String(d.armadura || 'sin_armadura');
     out.armadura = out.armaduras.includes(a) ? a : 'sin_armadura';
     const w = String(d.arma_inicial || 'pistola');
-    out.arma_inicial = w === 'pistola' || out.licencias.includes(w) ? w : 'pistola'; // una arma sin licencia no puede ser la inicial
+    out.arma_inicial = w === 'pistola' || out.licencias.includes(w) || out.armas_campania.includes(w) ? w : 'pistola'; // una arma sin licencia no puede ser la inicial
     if (d.logros && typeof d.logros === 'object') {
       for (const k of Object.keys(d.logros)) if (LOGRO_IDS.includes(k)) out.logros[k] = String(d.logros[k]).slice(0, 32);
     }
@@ -266,9 +273,21 @@
       const ok = perfilSanitize(d);
       if (!ok) { backupDamaged(raw); return; }
       P.data = ok;
+      P.migrated = !d.version || d.version < PERFIL_VERSION;
+      if (P.migrated) { // perfil viejo: se guarda una copia tal cual y queda migrado (nada se pierde)
+        try { storage.setItem(`${STORAGE_KEY}.v${(d && d.version) | 0}-bak`, String(raw).slice(0, 20000)); } catch (e) { /* nada */ }
+        P.save();
+      }
+    };
+    // otra pestaña guardó el perfil: lo releo (si no, al guardar acá pisaría lo que se compró o desbloqueó allá)
+    P.reload = function () {
+      if (!P.active) return false;
+      const before = JSON.stringify(P.data);
+      P.load();
+      return JSON.stringify(P.data) !== before;
     };
     P.level = (id) => (P.active ? (P.data.mejoras[id] | 0) : 0);
-    P.weaponUnlocked = (w) => w === 'pistola' || P.data.licencias.includes(w);
+    P.weaponUnlocked = (w) => w === 'pistola' || P.data.licencias.includes(w) || P.data.armas_campania.includes(w);
     P.mejoraOpen = function (m) {
       if (m.arma && !P.weaponUnlocked(m.arma)) return { ok: false, why: `Necesita ${WEAPON_NAMES[WEAPON_IDS.indexOf(m.arma)]}` };
       return { ok: true, why: '' };
@@ -346,6 +365,7 @@
       const c = P.data.contadores;
       if (typeof kind === 'string' && kind.startsWith('logro:')) P.unlock(kind.slice(6));
       else if (kind === 'kill') { c.apagados += n; P.unlock('primera_chispa'); if (c.apagados >= 100) P.unlock('cien_apagados'); P.save(); }
+      else if (kind === 'esquiva') { c.esquivas += n; if (c.esquivas >= 50) P.unlock('esquiva_neon'); P.save(); }
       else if (kind === 'kill_rpg') { c.apagados_rpg += n; if (c.apagados_rpg >= 100) P.unlock('cohetero'); P.save(); }
     };
     // eventos que manda el host por la red: solo los de la lista blanca (no puede regalar logros del Hangar)
@@ -374,6 +394,28 @@
       P.data.luces_ganadas_total += gain;
       P.save();
     };
+    // Campaña (como sync_campaign de la compu): unión de las ranuras -> armas ganadas (sirven en todos los modos),
+    // nivel de las mejoras compartidas con el Hangar (el máximo, nunca suma) y logros de los actos terminados.
+    // acts = [{ id, niveles: [ids] }] (solo los actos que la web puede jugar).
+    P.syncCampaign = function (slots, acts) {
+      if (!P.active) return;
+      const d = P.data, done = new Set();
+      let changed = false;
+      for (const s of slots || []) {
+        if (!s || typeof s !== 'object') continue;
+        for (const k of Object.keys(s.completados || {})) done.add(k);
+        for (const w of s.armas || []) {
+          if (WEAPON_IDS.slice(1).includes(w) && !d.armas_campania.includes(w)) { d.armas_campania.push(w); d.armas_campania.sort(); changed = true; }
+        }
+        for (const [mid, lvl] of Object.entries(s.mejoras || {})) {
+          const m = MEJORA_BY_ID[mid];
+          const l = Math.min(m ? m.niveles.length : 0, Math.floor(num(lvl, 0, 0, 9)));
+          if (m && l > (d.mejoras[mid] | 0)) { d.mejoras[mid] = l; changed = true; }
+        }
+      }
+      if (changed) { P.checkHangarLogros(); P.save(); }
+      for (const a of acts || []) if (a.niveles.length && a.niveles.every((x) => done.has(x))) P.unlock(`campania_acto${a.id}`);
+    };
     P.markLogrosSeen = function () { if (P.data.logros_nuevos.length) { P.data.logros_nuevos = []; P.save(); } };
     P.count = () => Object.keys(P.data.logros).length;
     // canjear un código secreto (mismos mensajes que la compu)
@@ -386,6 +428,7 @@
       if (P.data.codigos.includes(h)) return { ok: false, msg: `Ese código ya lo canjeaste (${info[0]}).` };
       P.data.codigos.push(h);
       P.data.luces = Math.min(1e7, P.data.luces + info[1]);
+      P.data.luces_ganadas_total += info[1];
       if (!P.save()) return { ok: true, msg: `¡Código canjeado: ${info[0]}! +${info[1]} ✦ (no se pudo guardar el perfil)` };
       return { ok: true, msg: `¡Código canjeado: ${info[0]}! +${info[1]} ✦` };
     };
@@ -394,7 +437,7 @@
   }
 
   return {
-    WEAPON_IDS, WEAPON_NAMES, WEAPON_DESC, LICENSE_COST, LIVES_BASE, LIVES_EXTRA_MAX, ROUND_LUCES_MAX, MG_SPREAD_DEG, RPG_RADIUS, STORAGE_KEY,
+    PERFIL_VERSION, WEAPON_IDS, WEAPON_NAMES, WEAPON_DESC, LICENSE_COST, LIVES_BASE, LIVES_EXTRA_MAX, ROUND_LUCES_MAX, MG_SPREAD_DEG, RPG_RADIUS, STORAGE_KEY,
     MEJORAS, MEJORA_BY_ID, ARMORS, ARMOR_IDS, LOGROS, LOGRO_IDS, LOGRO_PREMIO, REMOTE_LOGROS,
     mejoraValue, perfilNew, perfilSanitize, loadoutSanitize, loadoutEffects, shipStats, roundLuces, createPerfil,
     CODIGO_MAX_LEN, codigoNorm, codigoHash, sha256,
