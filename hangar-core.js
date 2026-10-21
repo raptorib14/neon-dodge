@@ -1,8 +1,7 @@
 /*
  * Neon Dodge web · Hangar, perfil y logros (lógica pura, sin DOM: se prueba también con node).
  * Port del Hangar v5.1 de la compu (diseño: DISENO-HANGAR.md) adaptado a lo que la web tiene de verdad:
- * 3 armas, 5 vidas, 3 jefes, power-ups, solo + cooperativo. La web NO tiene campaña ni Impulso, así que
- * quedan afuera lo que dependía de eso (ver README-hangar-web.md).
+ * v5.2 web: 8 armas, 3 habilidades, campaña (actos 1 a 3 jugables) con Impulso.
  * Perfil: localStorage 'neonDodge.perfil' (si el navegador no deja guardar, el perfil vive en memoria).
  */
 'use strict';
@@ -10,10 +9,27 @@
   if (typeof module === 'object' && module.exports) module.exports = factory();
   else root.NeonHangar = factory();
 })(typeof self !== 'undefined' ? self : this, function () {
-  const WEAPON_IDS = ['pistola', 'ametralladora', 'rpg'];
-  const WEAPON_NAMES = ['Pistola', 'Ametralladora', 'RPG'];
-  const WEAPON_DESC = ['La de siempre. Precisa y confiable.', 'Muchas balas rápidas. ¡Barré todo!', 'Cohete lento que explota en área.'];
-  const LICENSE_COST = { ametralladora: 60, rpg: 120 };
+  // v5.2: + las 5 armas nuevas de la compu (teclas 4-8). El índice es el id de arma del juego.
+  const WEAPON_IDS = ['pistola', 'ametralladora', 'rpg', 'escopeta', 'esquirla', 'escolta_halcon', 'arco_orsini', 'lanza_lumen'];
+  const WEAPON_NAMES = ['Pistola', 'Ametralladora', 'RPG', 'Abanico de Mecha', 'Esquirla Prisma', 'Escolta Halcón', 'Arco de Orsini', 'Lanza de Lumen'];
+  const WEAPON_DESC = ['La de siempre. Precisa y confiable.', 'Muchas balas rápidas. ¡Barré todo!', 'Cohete lento que explota en área.',
+    '5 perdigones en abanico. Corto alcance, mucho golpe.', 'Rebota 3 veces (+25 % por rebote) y atraviesa 1 enemigo.',
+    '3 orbes te rodean y frenan balas. Disparar los lanza.', 'Relámpago que salta entre 4 enemigos. Ignora escudos.',
+    'Rayo continuo que atraviesa todo. Te frena un poco.'];
+  const N_BASE_WEAPONS = 3; // pistola, ametralladora y RPG: las únicas del online (PROTO 2) y las del logro «Arsenal»
+  const LICENSE_COST = { ametralladora: 60, rpg: 120, escopeta: 90, esquirla: 130, escolta_halcon: 150, arco_orsini: 170, lanza_lumen: 240 };
+  // terminar este nivel de la campaña regala el arma (ARMAS_NUEVAS_NIVEL de la compu; 7-4 y 9-1 todavía no se juegan)
+  const ARMAS_NUEVAS_NIVEL = { escopeta: '2-3', esquirla: '4-3', arco_orsini: '6-1', escolta_halcon: '7-4', lanza_lumen: '9-1' };
+  // v5.2: habilidades (tecla E / botón táctil). Se compran y se equipa una en la pestaña HABILIDADES del Hangar.
+  const HABILIDADES = {
+    pulso_prisma: { nombre: 'Pulso Prisma', costo: 140, recarga: 18, color: [150, 230, 255],
+      desc: 'Onda que borra las balas enemigas a 170 px y empuja a los enemigos. No daña jefes.' },
+    senuelo_halcon: { nombre: 'Señuelo Halcón', costo: 160, recarga: 20, color: [120, 255, 170],
+      desc: 'Deja un holograma 4,5 s (3 de vida) que atrae a los enemigos cercanos.' },
+    sobremarcha: { nombre: 'Sobremarcha', costo: 180, recarga: 22, color: [255, 200, 80],
+      desc: '4 s con cadencia +33 % y velocidad +15 %.' },
+  };
+  const HAB_IDS = Object.keys(HABILIDADES);
   const LIVES_BASE = 5, LIVES_EXTRA_MAX = 2;      // tope: 5 + 2 = 7 vidas
   const ROUND_LUCES_MAX = 150;
   const MG_SPREAD_DEG = 6, RPG_RADIUS = 90;       // valores base de la web (game.js)
@@ -83,6 +99,8 @@
     // v5.2 web: campaña (mismos ids, textos y niveles que la compu; solo los actos que la web tiene)
     campania_acto1: { nombre: 'Chispas', desc: 'Completá «Chispas» en la campaña.', nivel: 'bronce', cat: 'campania' },
     campania_acto2: { nombre: 'Los Halcones', desc: 'Completá «Los Halcones» en la campaña.', nivel: 'bronce', cat: 'campania' },
+    campania_acto3: { nombre: 'La contraofensiva', desc: 'Completá «La contraofensiva» en la campaña.', nivel: 'bronce', cat: 'campania' },
+    // campania_acto4..6 vuelven cuando esos actos sean jugables en la web (por ahora: Próximamente)
     esquiva_neon: { nombre: 'Esquiva neón', desc: 'Atravesá 50 balas o enemigos con el Impulso (campaña).', nivel: 'plata', cat: 'combate' },
     secreto_1: { nombre: 'Tres de un saque', desc: 'Apagá 3 enemigos con un solo cohete.', nivel: 'secreto', cat: 'combate', secreto: true },
     secreto_2: { nombre: 'Ni un rasguño', desc: 'Derrotá a un jefe sin que te toque durante la pelea.', nivel: 'secreto', cat: 'jefes', secreto: true },
@@ -149,7 +167,7 @@
   function perfilNew() {
     return { version: PERFIL_VERSION, luces: 0, mejoras: {}, licencias: [], armas_campania: [], armaduras: ['sin_armadura'], armadura: 'sin_armadura',
       arma_inicial: 'pistola', logros: {}, logros_nuevos: [], contadores: { apagados: 0, apagados_rpg: 0, esquivas: 0 }, armaduras_usadas: [],
-      luces_ganadas_total: 0, codigos: [] };
+      luces_ganadas_total: 0, codigos: [], habilidades: [], habilidad: '' }; // v5.2: habilidades (perfiles v2 viejos: quedan vacías)
   }
 
   // Lo desconocido se ignora, lo que falta se completa, los números se acotan (igual que la compu).
@@ -177,6 +195,8 @@
     if (d.contadores && typeof d.contadores === 'object') {
       for (const k of Object.keys(out.contadores)) out.contadores[k] = Math.floor(num(d.contadores[k], 0, 0, 1e9));
     }
+    if (Array.isArray(d.habilidades)) out.habilidades = [...new Set(d.habilidades.map(String).filter((h) => HAB_IDS.includes(h)))];
+    out.habilidad = out.habilidades.includes(String(d.habilidad || '')) ? String(d.habilidad) : '';
     if (Array.isArray(d.codigos)) out.codigos = [...new Set(d.codigos.map(String).filter((h) => h in CODIGOS_LUCES))]; // perfiles viejos: sin campo = []
     return out;
   }
@@ -193,6 +213,8 @@
       for (const m of MEJORAS) if (m.id in mj) { const l = Math.floor(num(mj[m.id], 0, 0, m.niveles.length)); if (l) out.mejoras[m.id] = l; }
     }
     out.arma = Math.floor(num(lo.arma !== undefined ? lo.arma : lo.w, 0, 0, WEAPON_IDS.length - 1));
+    const hb = String(lo.hab || '');
+    if (HAB_IDS.includes(hb)) out.hab = hb;
     return out;
   }
 
@@ -203,8 +225,9 @@
     const v = (id) => mejoraValue(id, lo.mejoras[id] || 0);
     return {
       armadura: lo.armadura, arma: lo.arma,
-      dmg: [v('pistola_dano') || 1, v('ametralladora_dano') || 1, v('rpg_dano') || 1],
-      cdm: [v('pistola_cadencia') * arm.cad, v('ametralladora_cadencia') * arm.cad, v('rpg_cadencia') * arm.cad],
+      dmg: [v('pistola_dano') || 1, v('ametralladora_dano') || 1, v('rpg_dano') || 1, 1, 1, 1, 1, 1],
+      cdm: [v('pistola_cadencia') * arm.cad, v('ametralladora_cadencia') * arm.cad, v('rpg_cadencia') * arm.cad, arm.cad, arm.cad, arm.cad, arm.cad, arm.cad],
+      hab: lo.hab || '',
       mgSpread: v('ametralladora_precision') || MG_SPREAD_DEG,
       rpgRadius: v('rpg_radio') || RPG_RADIUS,
       pickup: v('iman') || 1,
@@ -295,7 +318,7 @@
     P.loadout = function () {
       if (!P.active) return loadoutSanitize({});
       const d = P.data;
-      return loadoutSanitize({ armadura: d.armadura, mejoras: d.mejoras, arma: WEAPON_IDS.indexOf(d.arma_inicial) });
+      return loadoutSanitize({ armadura: d.armadura, mejoras: d.mejoras, arma: WEAPON_IDS.indexOf(d.arma_inicial), hab: d.habilidad });
     };
     // ---- compras ----
     function pay(cost) {
@@ -345,6 +368,26 @@
     P.setStartWeapon = function (w) {
       if (!P.active || !WEAPON_IDS.includes(w) || !P.weaponUnlocked(w)) return false;
       P.data.arma_inicial = w;
+      P.save();
+      return true;
+    };
+    // v5.2: habilidades. Comprar la equipa; tocar la equipada la desequipa; tocar otra comprada la equipa.
+    P.buyHab = function (h) {
+      const H = HABILIDADES[h];
+      if (!H) return { ok: false, msg: 'Habilidad desconocida.' };
+      if (P.data.habilidades.includes(h)) return { ok: false, msg: 'Ya la tenés.' };
+      const r = pay(H.costo);
+      if (!r.ok) return r;
+      P.data.habilidades = P.data.habilidades.concat(h);
+      P.data.habilidad = h;
+      P.save();
+      return { ok: true, msg: `¡${H.nombre} lista! Se usa con E` };
+    };
+    P.equipHab = function (h) {
+      if (!P.active) return false;
+      if (h === '' || P.data.habilidad === h) P.data.habilidad = '';
+      else if (P.data.habilidades.includes(h)) P.data.habilidad = h;
+      else return false;
       P.save();
       return true;
     };
@@ -413,6 +456,9 @@
           if (m && l > (d.mejoras[mid] | 0)) { d.mejoras[mid] = l; changed = true; }
         }
       }
+      for (const [wid, lid] of Object.entries(ARMAS_NUEVAS_NIVEL)) { // v5.2: terminar ese nivel regala el arma nueva
+        if (done.has(lid) && !d.armas_campania.includes(wid)) { d.armas_campania.push(wid); d.armas_campania.sort(); changed = true; }
+      }
       if (changed) { P.checkHangarLogros(); P.save(); }
       for (const a of acts || []) if (a.niveles.length && a.niveles.every((x) => done.has(x))) P.unlock(`campania_acto${a.id}`);
     };
@@ -437,7 +483,7 @@
   }
 
   return {
-    PERFIL_VERSION, WEAPON_IDS, WEAPON_NAMES, WEAPON_DESC, LICENSE_COST, LIVES_BASE, LIVES_EXTRA_MAX, ROUND_LUCES_MAX, MG_SPREAD_DEG, RPG_RADIUS, STORAGE_KEY,
+    PERFIL_VERSION, WEAPON_IDS, WEAPON_NAMES, WEAPON_DESC, LICENSE_COST, N_BASE_WEAPONS, ARMAS_NUEVAS_NIVEL, HABILIDADES, HAB_IDS, LIVES_BASE, LIVES_EXTRA_MAX, ROUND_LUCES_MAX, MG_SPREAD_DEG, RPG_RADIUS, STORAGE_KEY,
     MEJORAS, MEJORA_BY_ID, ARMORS, ARMOR_IDS, LOGROS, LOGRO_IDS, LOGRO_PREMIO, REMOTE_LOGROS,
     mejoraValue, perfilNew, perfilSanitize, loadoutSanitize, loadoutEffects, shipStats, roundLuces, createPerfil,
     CODIGO_MAX_LEN, codigoNorm, codigoHash, sha256,

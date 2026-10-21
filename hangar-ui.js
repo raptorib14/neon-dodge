@@ -8,8 +8,8 @@
   const $ = (id) => document.getElementById(id);
   const TAU = Math.PI * 2;
   const col = (k, f) => ART.css(ART.colorOf(f ? `${k}*${f}` : k));
-  const TABS = ['armas', 'armaduras', 'mejoras'];
-  const TAB_NAMES = { armas: 'ARMAS', armaduras: 'ARMADURAS', mejoras: 'MEJORAS' };
+  const TABS = ['armas', 'armaduras', 'mejoras', 'habilidades'];
+  const TAB_NAMES = { armas: 'ARMAS', armaduras: 'ARMADURAS', mejoras: 'MEJORAS', habilidades: 'HABILIDADES' };
   const STAT_NAMES = { blindaje: 'BLINDAJE', velocidad: 'VELOCIDAD', dano: 'DAÑO', cadencia: 'CADENCIA' };
   const CAT_NAMES = { combate: 'combate', jefes: 'jefes', armas: 'armas', cooperativo: 'cooperativo', hangar: 'hangar', campania: 'campaña' };
   const NIVEL_NAMES = { bronce: 'bronce', plata: 'plata', oro: 'oro', secreto: 'secreto' };
@@ -53,6 +53,13 @@
             status: eq ? 'EQUIPADA' : a === 'sin_armadura' ? 'de serie' : own ? 'comprada' : `${A.costo} ✦`, locked: false };
         });
       }
+      if (S.tab === 'habilidades') { // v5.2: comprar equipa; con la equipada, el botón la desequipa
+        return H.HAB_IDS.map((h) => {
+          const A = H.HABILIDADES[h], own = (d.habilidades || []).includes(h), eq = d.habilidad === h;
+          return { kind: 'hab', id: h, name: A.nombre, desc: A.desc, own, equipped: eq, cost: own ? 0 : A.costo, recarga: A.recarga,
+            status: eq ? 'EQUIPADA · E' : own ? 'comprada' : `${A.costo} ✦`, locked: false };
+        });
+      }
       return H.MEJORAS.map((m) => {
         const lvl = perfil.level(m.id), mx = m.niveles.length, open = perfil.mejoraOpen(m);
         return { kind: 'mejora', id: m.id, name: m.nombre, desc: m.desc, lvl, max: mx, locked: !open.ok, why: open.why,
@@ -74,6 +81,11 @@
     let shipCtx = null;
 
     function rowIcon(it, cv) {
+      if (it.kind === 'hab') { // 44 px: el ícono de viernes (marco por tipo + glifo)
+        const g2 = fitCanvas(cv, 44, 44);
+        ART.drawAbilityIcon(g2, it.id, 22, 22, 44, 1, it.own ? 'lista' : 'bloqueada', S.t);
+        return;
+      }
       const g = fitCanvas(cv, 40, 40);
       const lock = it.locked ? 'tenue*0.7' : null;
       if (it.kind === 'arma') ART.drawLayers(g, ART.weapon[it.id], 20, 20, 15, 0, 0, { all: lock });
@@ -150,9 +162,13 @@
         const lvl = it.lvl;
         lines.push([`Nivel ${lvl}/${it.max}` + (lvl < it.max ? ` → ${fmt(m.niveles[lvl].valor)}` : ' (máximo)'), 'pro']);
         if (m.arma) lines.push([`Sirve con: ${H.WEAPON_NAMES[H.WEAPON_IDS.indexOf(m.arma)]}`, 'dim']);
+      } else if (it.kind === 'hab') {
+        lines.push([`Recarga: ${it.recarga} s · se usa con E (o el botón HAB en pantalla táctil).`, 'pro']);
+        lines.push(['Una equipada a la vez. Solo para jugar solo y en la campaña (online no hay habilidades).', 'dim']);
       } else {
         lines.push([it.idx === 0 ? 'Siempre disponible.' : it.own ? 'Podés elegirla como arma inicial y mejorarla.' : 'Con la licencia podés mejorarla y arrancar con ella.', 'dim']);
-        lines.push(['En la partida podés usar las 3 armas con 1 · 2 · 3.', 'dim']);
+        lines.push([it.idx < 3 ? 'En la partida: teclas 1 · 2 · 3 (o tocá la barra de armas).' : `Tecla ${it.idx + 1} (o tocá la barra de armas). Solo para jugar solo y en la campaña.`, 'dim']);
+        if (H.ARMAS_NUEVAS_NIVEL[it.id] && !it.own && campLevelPlayable(H.ARMAS_NUEVAS_NIVEL[it.id])) lines.push([`También se gana terminando el nivel ${H.ARMAS_NUEVAS_NIVEL[it.id]} de la campaña.`, 'dim']);
       }
       for (const [t, c] of lines) { const l = document.createElement('p'); l.className = 'ln ' + c; l.textContent = t; detailEl.appendChild(l); }
       if (it.cost > 0) { const c = document.createElement('p'); c.className = 'price'; c.textContent = `${it.cost} ✦`; detailEl.appendChild(c); }
@@ -165,6 +181,10 @@
       const msg = document.createElement('p'); msg.className = 'hg-msg ' + (S.msgOk ? 'ok' : 'bad'); msg.id = 'hg-msg'; msg.textContent = S.msg;
       detailEl.appendChild(msg);
     }
+    function campLevelPlayable(id) { // solo se menciona el nivel que regala el arma si ese acto ya se juega en la web
+      const CD = window.NeonCampaniaData;
+      return !!(CD && CD.actos && CD.actos.some((ac) => !ac.proximamente && (ac.niveles || []).some((l) => l.id === id)));
+    }
     function actionFor(it) {
       const L = perfil.data.luces;
       if (!perfil.active) return { label: 'SIN PERFIL', enabled: false };
@@ -174,6 +194,11 @@
       }
       if (it.kind === 'armadura') {
         if (it.equipped) return { label: 'EQUIPADA', enabled: false };
+        if (it.own) return { label: 'EQUIPAR', enabled: true };
+        return { label: `COMPRAR Y EQUIPAR · ${it.cost} ✦`, enabled: L >= it.cost };
+      }
+      if (it.kind === 'hab') {
+        if (it.equipped) return { label: 'DESEQUIPAR', enabled: true };
         if (it.own) return { label: 'EQUIPAR', enabled: true };
         return { label: `COMPRAR Y EQUIPAR · ${it.cost} ✦`, enabled: L >= it.cost };
       }
@@ -191,6 +216,9 @@
       } else if (it.kind === 'armadura') {
         if (it.own) { perfil.equipArmor(it.id); r = { ok: true, msg: `Equipada: ${it.name}` }; }
         else { r = perfil.buyArmor(it.id); if (r.ok) perfil.equipArmor(it.id); }
+      } else if (it.kind === 'hab') {
+        if (it.own) { const was = it.equipped; perfil.equipHab(it.id); r = { ok: true, msg: was ? `Sin habilidad equipada` : `Equipada: ${it.name} (E)` }; }
+        else r = perfil.buyHab(it.id);
       } else r = perfil.buyMejora(it.id);
       S.msg = r.msg || ''; S.msgOk = !!r.ok;
       renderAll();
@@ -391,7 +419,7 @@
         const n = items().length;
         if (c === 'ArrowDown') S.sel = (S.sel + 1) % n;
         else if (c === 'ArrowUp') S.sel = (S.sel + n - 1) % n;
-        else if (c === 'Tab') { S.tab = TABS[(TABS.indexOf(S.tab) + (e.shiftKey ? 2 : 1)) % 3]; S.sel = 0; }
+        else if (c === 'Tab') { S.tab = TABS[(TABS.indexOf(S.tab) + (e.shiftKey ? TABS.length - 1 : 1)) % TABS.length]; S.sel = 0; }
         else if (c === 'ArrowLeft' || c === 'ArrowRight') { // mueve entre los slots de arma (1·2·3) y la armadura
           if (S.tab !== 'armas') { S.tab = 'armas'; S.sel = 0; } else if (c === 'ArrowRight' && S.sel === 2) { S.tab = 'armaduras'; S.sel = 0; } else S.sel = (S.sel + (c === 'ArrowRight' ? 1 : 2)) % 3;
         } else if (c === 'Enter' || c === 'NumpadEnter') { act(); return true; }

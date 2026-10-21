@@ -26,10 +26,12 @@
   const RED = [255, 60, 90];
 
   const MAX_PARTICLES = 700, MAX_ENEMIES = 24, MAX_ENEMY_BULLETS = 260; // v3: MAX_ENEMIES = 40
-  const KILL_POINTS = { orb: 2, spinner: 3, hunter: 5 };
-  const ENEMY_HP = { orb: 1, spinner: 2, hunter: 3 };
-  const ENEMY_RADIUS = { orb: 12, spinner: 14, hunter: 16 };
-  const ENEMY_COLOR = { orb: MAGENTA, spinner: YELLOW, hunter: RED };
+  // v5.2: escudero y apagador (solo en la campaña, actos 4-6)
+  const KILL_POINTS = { orb: 2, spinner: 3, hunter: 5, escudero: 6, apagador: 5 };
+  const ENEMY_HP = { orb: 1, spinner: 2, hunter: 3, escudero: 4, apagador: 2 };
+  const ENEMY_RADIUS = { orb: 12, spinner: 14, hunter: 16, escudero: 18, apagador: 14 };
+  const ENEMY_COLOR = { orb: MAGENTA, spinner: YELLOW, hunter: RED, escudero: [170, 190, 210], apagador: [120, 80, 200] };
+  const ESCUDERO_SPEED = 55, ESCUDERO_TURN = 1.4, ESCUDERO_ARC = 120 * Math.PI / 180, APAGADOR_SPEED = 45;
   const BOSS_SCORES = [80, 220, 400];
   const SCORE_POWERUP = 10;
   const FIRE_COOLDOWN = 0.12, FIRE_COOLDOWN_RAPID = 0.065, BULLET_SPEED = 640;
@@ -53,6 +55,22 @@
   const RPG_RADIUS = 90, RPG_SPLASH = 3; // explosión: 3 de daño a todo lo que esté a <= 90 px (al jefe: una vez)
   // tope global: 12 tiros/s cambiando de arma; con el disparo rápido, el de la pistola rápida (0,065 s)
   const GLOBAL_CD = 1 / 12, GLOBAL_CD_RAPID = 0.065;
+  // ---- v5.2: las 5 armas nuevas (teclas 4-8), mismos números que la compu ----
+  const SHOTGUN = { n: 5, dmg: 1.2, cd: 1 / 1.6, spread: 22, speed: 620, range: 260, recoil: 18 };
+  const SHARD = { dmg: 1.3, cd: 1 / 3.5, speed: 520, life: 2.2, bounces: 3, mult: 1.25, pierce: 1 };
+  const ORB = { max: 3, r: 7, orbit: 46, spin: 3.2, contact: 1, contactCd: 0.25, dmg: 2.5, speed: 700, life: 0.75, cd: 0.3, regen: 1.4 };
+  const ARC = { dmg: 1.6, falloff: 0.7, jumps: 3, cd: 0.4, range: 230, jumpRange: 150, cone: 35 };
+  const LANCE = { dps: 8, tick: 0.1, range: 380, energy: 2.5, recharge: 1.5, slow: 0.7 };
+  const OVERDRIVE = { time: 4, cad: 0.75, speed: 1.15 };
+  const PULSE_RADIUS = 170, PULSE_PUSH = 70, DECOY_TIME = 4.5, DECOY_HP = 3, DECOY_PULL = 420;
+  const WEAPON_COLORS = [null, null, null, [255, 140, 60], [150, 255, 235], [110, 190, 255], [200, 150, 255], [255, 213, 74]];
+  WEAPONS.push(
+    { key: 'escopeta', cd: SHOTGUN.cd, cdRapid: SHOTGUN.cd, dmg: SHOTGUN.dmg, speed: SHOTGUN.speed, r: 4, spread: 0, life: SHOTGUN.range / SHOTGUN.speed },
+    { key: 'esquirla', cd: SHARD.cd, cdRapid: SHARD.cd, dmg: SHARD.dmg, speed: SHARD.speed, r: 5, spread: 0, life: SHARD.life },
+    { key: 'escolta_halcon', cd: ORB.cd, cdRapid: ORB.cd, dmg: ORB.dmg, speed: ORB.speed, r: ORB.r, spread: 0, life: ORB.life },
+    { key: 'arco_orsini', cd: ARC.cd, cdRapid: ARC.cd, dmg: ARC.dmg, speed: 0, r: 0, spread: 0, life: 0 },
+    { key: 'lanza_lumen', cd: LANCE.tick, cdRapid: LANCE.tick, dmg: LANCE.dps * LANCE.tick, speed: 0, r: 0, spread: 0, life: 0 });
+  const N_NET_WEAPONS = 3; // PROTO 2: el online solo conoce pistola / ametralladora / RPG (ver NOTAS-WEB-V52.md)
 
   // ---- Vidas (spec §3) ----
   const START_LIVES = 5, MAX_LIVES = 5, RESPAWN_SHORT = 2, RESPAWN_INVULN = 2;
@@ -68,7 +86,9 @@
 
   // ---- Textos (de /workspace/v4/textos.md, de Juan) ----
   const TXT = {
-    arma: ['Pistola', 'Ametralladora', 'RPG'],
+    arma: ['Pistola', 'Ametralladora', 'RPG', 'Abanico de Mecha', 'Esquirla Prisma', 'Escolta Halcón', 'Arco de Orsini', 'Lanza de Lumen'],
+    armaCorta: ['PIST', 'AMET', 'RPG', 'ABAN', 'ESQU', 'ESCO', 'ARCO', 'LANZ'],
+    habBoton: 'HAB', habOnline: 'Las habilidades son solo para jugar solo', recalentada: 'Recalentada…',
     armaDesc: ['La de siempre. Precisa y confiable.', 'Muchas balas rápidas. ¡Barré todo!', 'Cohete lento que explota en área.'],
     armaHud: 'Arma: {arma}', armaCambio: '¡{arma}!', recargando: 'Recargando…', armaBoton: 'ARMA',
     mapaTitulo: 'Elegí el mapa', mapaLoEligeHost: 'El mapa lo elige el que creó la partida', mapaElegido: 'Mapa: {mapa}',
@@ -299,7 +319,7 @@
       portals.push({ c: hex(pp.color), cooldown: pp.cooldown_s, ends: [end(e1), end(e2)] });
     }
     return {
-      id: m.id, nombre: m.nombre, camp: !!m.camp,
+      id: m.id, nombre: m.nombre, camp: !!m.camp, def: m, // v5.2: la campaña lee corrientes / compuertas / interruptores / láseres
       bg: hex(pal.fondo), gridV: hex(pal.grilla), gridH: hex(pal.grilla_horizontal || pal.grilla),
       principal, acento: hex(pal.acento),
       star: m.id === 'arena_neon' ? [110, 150, 255] : principal, // Arena Neón: igual que la v3
@@ -374,6 +394,7 @@
   function useMap(id, save) {
     const i = MAPS.findIndex((m) => m.id === id);
     MAP = MAPS[i >= 0 ? i : 0];
+    if (MAP.baseObs) MAP.obstacles = MAP.baseObs.slice(); // v5.2: saca las compuertas que haya dejado la campaña
     if (typeof G !== 'undefined') G.mapIdx = MAPS.indexOf(MAP);
     if (save) lsSet(LS_MAP, MAP.id);
   }
@@ -495,6 +516,21 @@
 
   function drawEnemy(e) {
     const px = e.x, py = e.y, fl = e.flash > 0, r = e.r;
+    if (e.campShield) { ctx.strokeStyle = rgb(CYAN, 0.8); ctx.lineWidth = 2; ctx.setLineDash([4, 4]); circle(px, py, r + 7); ctx.stroke(); ctx.setLineDash([]); }
+    if (e.kind === 'escudero') { // v5.2: cuerpo hexagonal + escudo frontal de 120°
+      const c = fl ? WHITE : ENEMY_COLOR.escudero;
+      poly([0, 1, 2, 3, 4, 5].map((i) => [px + Math.cos(e.angle + i * TAU / 6) * r * 0.8, py + Math.sin(e.angle + i * TAU / 6) * r * 0.8]));
+      ctx.fillStyle = rgb(c, 0.55); ctx.fill(); ctx.strokeStyle = rgb(WHITE); ctx.lineWidth = 1.5; ctx.stroke();
+      ctx.strokeStyle = rgb([200, 235, 255]); ctx.lineWidth = 4;
+      ctx.beginPath(); ctx.arc(px, py, r + 4, e.angle - ESCUDERO_ARC / 2, e.angle + ESCUDERO_ARC / 2); ctx.stroke();
+      return;
+    }
+    if (e.kind === 'apagador') { // v5.2: esfera oscura con anillo violeta y ojo
+      ctx.fillStyle = 'rgb(12,8,24)'; circle(px, py, r); ctx.fill();
+      ctx.strokeStyle = rgb(fl ? WHITE : ENEMY_COLOR.apagador); ctx.lineWidth = 3; ctx.stroke();
+      ctx.fillStyle = rgb([200, 170, 255]); circle(px + 3, py - 2, 3); ctx.fill();
+      return;
+    }
     if (e.kind === 'orb') {
       ctx.fillStyle = rgb(fl ? WHITE : MAGENTA);
       circle(px, py, r); ctx.fill();
@@ -592,7 +628,7 @@
       this.phase2Announced = false;
       this.ab = null; this.waves = [];
     }
-    get phase() { return this.hp <= this.maxHp * 0.5 ? 2 : 1; }
+    get phase() { return this.hp <= this.maxHp * (this.phase2Frac || 0.5) ? 2 : 1; } // v5.2: fase2_desde de la variante
     get vulnerable() { return this.state !== 'enter'; }
     update(dt, g) {
       this.flash = Math.max(0, this.flash - dt);
@@ -855,11 +891,11 @@
       // mientras hay una en curso. El abanico, los hunters y el anillo siguen igual durante el aviso.
       this.teleCd -= dt; this.missCd -= dt;
       if (!this.ab) {
-        if (this.teleCd <= 0) {
+        if (this.teleCd <= 0 && this.abilOnly !== 'b') {
           const d = this.teleDest();
           if (d) this.startAb(AB.S_TELE, TXT.seekerTeleport, d[0], d[1]);
           this.teleCd = p2 ? 7 : 9;
-        } else if (this.missCd <= 0) {
+        } else if (this.missCd <= 0 && this.abilOnly !== 'a') {
           this.startAb(AB.S_MISS, TXT.seekerMisiles, p2 ? 3 : 2);
           this.missCd = p2 ? 7.5 : 10;
         }
@@ -1077,23 +1113,89 @@
       circle(px, py, 12 + 3 * Math.sin(this.angle * 8)); ctx.fill();
     }
   }
+  // v5.2 · APAGÓN (jefe del 6-4, solo campaña): vaivén lento arriba, anillo de 8 (10) balas lentas, «apagón»
+  // (6 s con la luz en 0,2) y «semillas» (2 apagadores con aviso de 0,8 s). Port de la clase Apagon de la compu.
+  class Apagon extends Boss {
+    constructor() {
+      super({ name: 'APAGÓN', color: [138, 110, 230], maxHp: 540, r: 40, bonus: 60, enterY: 130 });
+      this.ringCd = 2.0; this.dirx = 1; this.apCd = 9; this.seCd = 12; this.apWarn = 0; this.seWarn = 0; this.seeds = []; this.ringOff = 0;
+    }
+    fight(dt, g) {
+      const cr = G.camp;
+      this.x += this.dirx * APAGON_SWAY * dt;
+      if (this.x > W - 150 || this.x < 150) { this.dirx *= -1; this.x = clamp(this.x, 150, W - 150); }
+      this.y = this.enterY + Math.sin(this.t * 0.7) * 18;
+      this.ringCd -= dt;
+      if (this.ringCd <= 0) {
+        const [n, every] = this.phase === 1 ? [8, 3.5] : [10, 3.0];
+        this.ringShot(g, n, 140, this.ringOff, [200, 170, 255]);
+        this.ringOff += Math.PI / n; this.ringCd = every;
+        g.particles.ring(this.x, this.y, this.color, 70, 0.4, 3);
+      }
+      this.apCd -= dt;
+      if (this.apCd <= 0 && this.apWarn <= 0) {
+        this.apCd = 9; this.apWarn = 0.8;
+        G.showBanner('¡APAGÓN!', this.color, 1.4);
+        logAbility('APAGÓN:apagon');
+        if (cr) { cr.darkWarn = 0.8; cr.event('jefe_habilidad', { habilidad: 'apagon' }); }
+      }
+      if (this.apWarn > 0) { this.apWarn -= dt; if (this.apWarn <= 0 && cr) { cr.darkBoost = 0.2; cr.darkBoostT = 6; } }
+      this.seCd -= dt;
+      if (this.seCd <= 0 && this.seWarn <= 0) {
+        this.seCd = 12; this.seWarn = 0.8;
+        this.seeds = [0, 1].map(() => freePoint(rand(120, W - 120), rand(260, H - 120), 16, 80) || [rand(120, W - 120), rand(260, H - 120)]);
+        logAbility('APAGÓN:semillas');
+        if (cr) cr.event('jefe_habilidad', { habilidad: 'semillas' });
+      }
+      if (this.seWarn > 0) {
+        this.seWarn -= dt;
+        if (this.seWarn <= 0) {
+          for (const q of this.seeds) { if (cr) cr.spawnEnemy('apagador', 'bordes', 6, [q[0], q[1]]); g.particles.ring(q[0], q[1], this.color, 40, 0.3, 2); }
+          this.seeds = [];
+        }
+      }
+    }
+    execute() {}
+    draw() {
+      const px = this.x, py = this.y, r = this.r, c = this.bodyColor();
+      this.drawAura(px, py);
+      ctx.fillStyle = 'rgb(10,6,22)'; circle(px, py, r); ctx.fill();
+      ctx.beginPath(); ctx.arc(px, py, r, 0, TAU); this.strokeNeon(c, 4);
+      ctx.strokeStyle = rgb([200, 170, 255], 0.7); ctx.lineWidth = 2;
+      for (let k = 0; k < 6; k++) { const a = this.angle * 0.6 + k * TAU / 6; ctx.beginPath(); ctx.arc(px, py, r * 0.72, a, a + 0.5); ctx.stroke(); }
+      ctx.fillStyle = rgb(this.phase === 2 ? [255, 51, 85] : [200, 170, 255]); circle(px + 4, py + 2, r * 0.22); ctx.fill();
+      ctx.fillStyle = rgb(WHITE); circle(px + 6, py, 3); ctx.fill();
+      const blink = Math.floor(this.seWarn * 10) % 2 === 0;
+      for (const q of this.seeds) { ctx.strokeStyle = rgb(blink ? [255, 60, 90] : [200, 170, 255]); ctx.lineWidth = 2; circle(q[0], q[1], 18); ctx.stroke(); }
+    }
+  }
   const BOSS_TYPES = [Warden, Seeker, Titan];
 
   // ---------------------------------------------------------------------------
   // Jugadores. hp = 1 vivo / 0 muerto (esperando reaparecer o "fuera"); lives = vidas que le quedan.
   // ---------------------------------------------------------------------------
   function spawnPoint(idx) { const s = MAP.spawns[(idx | 0) % MAP.spawns.length]; return [s[0], s[1]]; }
+  // v5.2: lo que viaja por la red (PROTO 2): arma 0-2 y sin habilidad (un par viejo no conoce lo demás)
+  function netLoadout() {
+    const lo = Object.assign({}, PERFIL.loadout());
+    if (!(lo.arma >= 0 && lo.arma < N_NET_WEAPONS)) lo.arma = 0;
+    delete lo.hab;
+    return lo;
+  }
   function makePlayer(id, name, idx = 0, lo) {
     const [x, y] = spawnPoint(idx);
     const e = HG.loadoutEffects(lo); // loadout vacío = exactamente la web sin Hangar
     return { id, name: name || 'Jugador', slot: idx, x, y, r: 14, speed: 280 * e.speed, hp: 1, lives: START_LIVES + e.extraLives, out: false,
-      invuln: 0, magnet: 0, rapid: 0, weapon: e.arma, wcd: [0, 0, 0], gcd: 0, tpCd: 1.0,
+      invuln: 0, magnet: 0, rapid: 0, weapon: NET.mode !== 'solo' && e.arma >= N_NET_WEAPONS ? 0 : e.arma, wcd: [0, 0, 0, 0, 0, 0, 0, 0], gcd: 0, tpCd: 1.0,
       angle: -Math.PI / 2, trailAcc: 0, color: PLAYER_COLORS[id % 4],
       respawn: 0, firing: false, away: false, inp: null, seq: 0, lastInput: 0,
       // v5.1 Hangar
       armor: e.armadura, maxLives: e.maxLives, dmg: e.dmg, cdm: e.cdm, mgSpread: e.mgSpread, rpgRadius: e.rpgRadius, pickup: e.pickup,
       pu: e.pu, respawnInv: e.respawnInv, shieldS: e.shieldS, shieldCd: 0, shield: e.shieldS > 0,
-      bossHit: false, lostLife: false, usedW: new Set(), achSent: new Set() };
+      bossHit: false, lostLife: false, usedW: new Set(), achSent: new Set(),
+      // v5.2: orbes, Lanza, Sobremarcha y habilidad equipada
+      orbs: ORB.max, orbRegen: 0, orbAng: 0, orbCds: [0, 0, 0], lanceE: LANCE.energy, lanceLock: 0, beamOn: 0, beamEnd: null,
+      overdrive: 0, hab: NET.mode === 'solo' ? e.hab || '' : '', habCd: 0 };
   }
   function stepMove(p, mx, my, dt) {
     const ml = Math.hypot(mx, my);
@@ -1160,20 +1262,21 @@
     name: cleanName(lsGet(LS_NAME, 'Jugador')),
     best: parseInt(lsGet(LS_BEST, '0'), 10) || 0,
     god: false,
+    decoys: [], arcs: [], habReq: false, // v5.2: señuelos, arcos del Arco de Orsini, pedido de habilidad (E)
     camp: null, // CampRun mientras se juega un nivel de la campaña
     fps: 60,
     mapIdx: 0,
     stats: { frames: 0, playFrames: 0, bossFrames: 0, shots: 0, kills: 0, bossesKilled: 0, maxParticles: 0,
-      maxEnemyBullets: 0, bossesSeen: [], shotsBy: {}, shotsByW: [0, 0, 0], explosions: 0, teleports: 0,
+      maxEnemyBullets: 0, bossesSeen: [], shotsBy: {}, shotsByW: [0, 0, 0, 0, 0, 0, 0, 0], habUsed: {}, arcJumps: 0, lanceTicks: 0, orbBlocks: 0, pulseErased: 0, shieldBlocks: 0, explosions: 0, teleports: 0,
       abilities: {}, abilityLog: [], deaths: 0, overs: 0, maxMsg: 0, maxSnap: 0, rpgBossHits: 0 },
   };
   useMap(prefMap()); // preferencia guardada (si no está o está rota, Arena Neón)
 
   function initRound(roster) {
-    roster = roster || [{ id: 0, name: G.name, lo: PERFIL.loadout() }];
+    roster = roster || [{ id: 0, name: G.name, lo: NET.mode === 'solo' ? PERFIL.loadout() : netLoadout() }];
     G.players = roster.map((r, i) => makePlayer(r.id, r.name, r.slot !== undefined ? r.slot : i, r.lo));
     G.player = G.players.find((p) => p.id === NET.myId) || G.players[0];
-    G.enemies = []; G.bullets = []; G.ebullets = []; G.powerups = []; G.mines = []; G.missiles = [];
+    G.enemies = []; G.bullets = []; G.ebullets = []; G.powerups = []; G.mines = []; G.missiles = []; G.decoys = []; G.arcs = []; G.habReq = false;
     G.mineOrbit = 0;
     G.particles = new ParticleSystem();
     G.popups = []; G.pendingFx = [];
@@ -1232,6 +1335,8 @@
     if (NET.rec) NET.ev.push(['eb', b.id, r0(x), r0(y), r0(vx), r0(vy), ci(c), r, r0(G.t0 * 1000)]);
   };
   G.targetFor = (x, y) => {
+    const dc = G.decoys && G.decoys.length ? decoyNear(x === undefined ? W / 2 : x, y === undefined ? H / 2 : y) : null; // v5.2: el señuelo atrae
+    if (dc) return [dc.x, dc.y];
     const p = nearestAlive(x === undefined ? W / 2 : x, y === undefined ? H / 2 : y);
     return p ? [p.x, p.y] : [W / 2, H / 2];
   };
@@ -1259,7 +1364,8 @@
     const ang = Math.atan2(ty - y, tx - x) + rand(-0.5, 0.5);
     return { id: ++G.nid, x, y, vx: Math.cos(ang) * speed, vy: Math.sin(ang) * speed, r: ENEMY_RADIUS[kind], kind,
       hp: ENEMY_HP[kind], huntSpeed: Math.min(170, 90 + w * 4), angle: 0,
-      spin: kind !== 'orb' ? rand(2, 5) : 0, flash: 0, alive: true };
+      spin: kind === 'orb' || kind === 'escudero' || kind === 'apagador' ? 0 : rand(2, 5), flash: 0, alive: true,
+      ...(kind === 'escudero' ? { angle: Math.atan2(ty - y, tx - x) } : {}) };
   };
 
   function spawnPowerup(x, y, kind) {
@@ -1419,6 +1525,7 @@
     if (p.shieldS > 0 && p.shieldCd <= 0) { // armadura Prisma / Coraza: absorbe el golpe (no pierde vida)
       p.shieldCd = p.shieldS; p.shield = false; p.invuln = 1.0;
       G.particles.ring(p.x, p.y, [150, 230, 255], 50, 0.35, 3);
+      if (G.camp && p === G.player) G.camp.onShieldBroken(); // v5.2: Escudo Prisma
       return true;
     }
     G.particles.burst(p.x, p.y, RED, 22, 220, 6);
@@ -1475,6 +1582,7 @@
     const wi = p.weapon, wp = WEAPONS[wi];
     let [dx, dy] = norm(ax - p.x, ay - p.y);
     if (!dx && !dy) { dx = Math.cos(p.angle); dy = Math.sin(p.angle); }
+    if (wi >= 3) { fireV52(p, dx, dy); return; }
     const spread = wi === 1 ? p.mgSpread : wp.spread; // «Mira fina»
     const a = Math.atan2(dy, dx) + rand(-spread, spread) * deg;
     dx = Math.cos(a); dy = Math.sin(a);
@@ -1485,13 +1593,256 @@
     if (wi === 2) shakeFor(p, 3);
     // ametralladora y RPG arrastran el sobrante del cuadro (12/s y 1,2 s exactos aunque los cuadros no duren
     // justo 1/60 s); la pistola queda como en la v3. Tope global (1.8): 12/s, o 0,065 s con el disparo rápido.
-    const cdNow = (p.rapid > 0 ? wp.cdRapid : wp.cd) * p.cdm[wi], gate = p.rapid > 0 ? GLOBAL_CD_RAPID : GLOBAL_CD;
+    const cdNow = (p.rapid > 0 ? wp.cdRapid : wp.cd) * p.cdm[wi] * (p.overdrive > 0 ? OVERDRIVE.cad : 1), gate = p.rapid > 0 ? GLOBAL_CD_RAPID : GLOBAL_CD;
     const carry = wi !== 0 ? Math.min(0, p.wcd[wi]) : 0;
     p.wcd[wi] = cdNow + carry;
     p.gcd = Math.min(cdNow, gate) + Math.min(0, p.gcd);
-    if (!p.usedW.has(wi)) { p.usedW.add(wi); if (p.usedW.size >= WEAPONS.length) achOnce(p, 'arsenal'); }
+    if (!p.usedW.has(wi)) { p.usedW.add(wi); if ([0, 1, 2].every((k) => p.usedW.has(k))) achOnce(p, 'arsenal'); } // «Arsenal»: las 3 de siempre
   }
 
+  // ---- v5.2: armas nuevas y habilidades (port de Game.fire / fire_arc / fire_lance / use_ability / tick_v52) ----
+  function canFire(p) {
+    if (p.weapon === 7 && (p.lanceLock > 0 || p.lanceE <= 0)) return false;
+    if (p.weapon === 5 && p.orbs <= 0) return false;
+    return p.wcd[p.weapon] <= 1e-6 && p.gcd <= 1e-6;
+  }
+  function tickPlayerV52(p, dt) {
+    p.habCd = Math.max(0, p.habCd - dt);
+    p.overdrive = Math.max(0, p.overdrive - dt);
+    if (p.beamOn > 0) p.beamOn = Math.max(0, p.beamOn - dt);
+    else if (p.lanceLock > 0) { p.lanceLock -= dt; if (p.lanceLock <= 0) { p.lanceLock = 0; p.lanceE = LANCE.energy; } } // recalentada: 1,5 s y vuelve llena
+    else p.lanceE = Math.min(LANCE.energy, p.lanceE + dt * LANCE.energy / LANCE.recharge);
+    if (p.orbs < ORB.max) { p.orbRegen += dt; if (p.orbRegen >= ORB.regen) { p.orbRegen = 0; p.orbs++; } } else p.orbRegen = 0;
+    p.orbAng += ORB.spin * dt;
+    for (let i = 0; i < p.orbCds.length; i++) p.orbCds[i] = Math.max(0, p.orbCds[i] - dt);
+  }
+  function speedMult(p) { return (p.beamOn > 0 ? LANCE.slow : 1) * (p.overdrive > 0 ? OVERDRIVE.speed : 1); }
+  function orbPositions(p) {
+    const out = [];
+    for (let i = 0; i < p.orbs; i++) { const a = p.orbAng + i * TAU / ORB.max; out.push([p.x + Math.cos(a) * ORB.orbit, p.y + Math.sin(a) * ORB.orbit]); }
+    return out;
+  }
+  function shieldBlocks(e, tx, ty) { // escudero: frena lo que le llega de frente (arco de 120°)
+    const l = Math.hypot(tx, ty);
+    if (l < 1e-6) return false;
+    return (Math.cos(e.angle) * -tx + Math.sin(e.angle) * -ty) / l >= Math.cos(ESCUDERO_ARC / 2);
+  }
+  function v52Bullet(p, x, y, a, speed, life, dmg, r, wi) {
+    const b = { id: ++G.nid, x, y, vx: Math.cos(a) * speed, vy: Math.sin(a) * speed, life, r, dmg, c: WEAPON_COLORS[wi], w: wi, owner: p.id };
+    G.bullets.push(b); // (sin evento de red: estas armas no existen en el online PROTO 2)
+    if (p === G.player) G.stats.shots++;
+    G.stats.shotsBy[p.id] = (G.stats.shotsBy[p.id] || 0) + 1;
+    G.stats.shotsByW[wi]++;
+    return b;
+  }
+  function hitscanTargets() {
+    const out = [];
+    for (const e of G.enemies) if (e.alive && !e.campShield) out.push({ k: 'e', o: e, x: e.x, y: e.y, r: e.r });
+    if (G.boss && G.boss.vulnerable) out.push({ k: 'b', o: G.boss, x: G.boss.x, y: G.boss.y, r: G.boss.r });
+    if (G.camp) for (const t of G.camp.turrets) if (!t.hack && t.hp > 0) out.push({ k: 't', o: t, x: t.x, y: t.y, r: t.r });
+    for (const m of G.mines) if (!m.dead) out.push({ k: 'm', o: m, x: m.x, y: m.y, r: MINE_R });
+    for (const m of G.missiles) if (!m.dead) out.push({ k: 'x', o: m, x: m.x, y: m.y, r: MISSILE_R });
+    return out;
+  }
+  function hitTarget(t, dmg, owner) {
+    const o = t.o;
+    if (t.k === 'e') { if (!o.alive) return; o.hp -= dmg; o.flash = 0.06; if (o.hp <= 0.001) killEnemy(o, true, owner, false); }
+    else if (t.k === 'b') { if (G.boss === o && o.vulnerable && o.damage(dmg)) onBossKilled(o); }
+    else if (t.k === 't') { o.hp -= dmg; o.flash = 0.06; }
+    else if (t.k === 'm') { if (o.dead) return; o.hp -= dmg; o.flash = 0.06; if (o.hp <= 0.001) killMine(o, true); }
+    else if (t.k === 'x') { if (o.dead) return; o.hp -= dmg; o.flash = 0.06; if (o.hp <= 0.001) killMissile(o, true); }
+  }
+  function segDist(px, py, ax, ay, bx, by) {
+    const vx = bx - ax, vy = by - ay, l2 = vx * vx + vy * vy;
+    const k = l2 > 0 ? clamp(((px - ax) * vx + (py - ay) * vy) / l2, 0, 1) : 0;
+    return Math.hypot(px - ax - vx * k, py - ay - vy * k);
+  }
+  function addArc(pts, c) {
+    const poly = [];
+    for (let i = 0; i + 1 < pts.length; i++) {
+      const [ax, ay] = pts[i], [bx, by] = pts[i + 1], [nx, ny] = norm(-(by - ay), bx - ax);
+      for (let k = 0; k < 5; k++) { const j = k > 0 ? rand(-9, 9) : 0; poly.push([ax + (bx - ax) * k / 5 + nx * j, ay + (by - ay) * k / 5 + ny * j]); }
+    }
+    poly.push(pts[pts.length - 1]);
+    G.arcs.push({ pts: poly, t: 0.14, c });
+  }
+  function fireArc(p, mx, my, dx, dy) {
+    const tg = hitscanTargets(), a0 = Math.atan2(dy, dx);
+    let best = null, bs = 1e9;
+    for (const t of tg) {
+      const vx = t.x - p.x, vy = t.y - p.y;
+      if (vx * vx + vy * vy < 1) continue;
+      const dist = Math.hypot(vx, vy) - t.r, ang = Math.abs(((Math.atan2(vy, vx) - a0) / deg % 360 + 540) % 360 - 180);
+      if (dist > ARC.range || ang > ARC.cone) continue;
+      const sc = dist + ang * 3;
+      if (sc < bs) { best = t; bs = sc; }
+    }
+    const col = WEAPON_COLORS[6];
+    if (!best) { addArc([[mx, my], [mx + dx * ARC.range * 0.55, my + dy * ARC.range * 0.55]], col); return; }
+    const chain = [best], seen = new Set([best.o]);
+    let cur = best;
+    for (let j = 0; j < ARC.jumps; j++) {
+      let nxt = null, nd = ARC.jumpRange;
+      for (const t of tg) {
+        if (seen.has(t.o)) continue;
+        const d = Math.hypot(t.x - cur.x, t.y - cur.y) - t.r;
+        if (d < nd) { nxt = t; nd = d; }
+      }
+      if (!nxt) break;
+      chain.push(nxt); seen.add(nxt.o); cur = nxt;
+    }
+    let dmg = ARC.dmg * p.dmg[6];
+    const pts = [[mx, my]];
+    for (const t of chain) { pts.push([t.x, t.y]); hitTarget(t, dmg, p.id); G.particles.burst(t.x, t.y, col, 6, 160, 3); dmg *= ARC.falloff; }
+    G.stats.arcJumps += chain.length - 1;
+    addArc(pts, col);
+  }
+  function fireLance(p, mx, my, dx, dy) {
+    let ex = mx, ey = my, dist = 0;
+    while (dist < LANCE.range) { // el rayo se corta en obstáculos (y compuertas cerradas)
+      const nx = ex + dx * 8, ny = ey + dy * 8;
+      if (nx < 0 || nx > W || ny < 0 || ny > H || (MAP.obstacles.length && obstacleHit(nx, ny, 2))) break;
+      ex = nx; ey = ny; dist += 8;
+    }
+    const hits = [];
+    for (const t of hitscanTargets()) if (segDist(t.x, t.y, mx, my, ex, ey) < t.r + 6) hits.push([Math.hypot(t.x - mx, t.y - my), t]);
+    hits.sort((a, b) => a[0] - b[0]);
+    const dmg = LANCE.dps * LANCE.tick * p.dmg[7] / Math.max(0.5, p.cdm[7]);
+    for (const [dd, t] of hits) {
+      if (t.k === 'e' && t.o.kind === 'escudero' && shieldBlocks(t.o, dx, dy)) { // el escudo frena el rayo de frente
+        const k = Math.max(0, dd - t.r); ex = mx + dx * k; ey = my + dy * k;
+        G.particles.spray(ex, ey, -dx, -dy, [200, 235, 255], 3, 0.8, 140, 3, 0.15);
+        G.stats.shieldBlocks++;
+        break;
+      }
+      hitTarget(t, dmg, p.id);
+    }
+    p.beamEnd = [ex, ey];
+    p.beamOn = LANCE.tick + 0.05;
+    G.stats.lanceTicks++;
+  }
+  function fireV52(p, dx, dy) {
+    const wi = p.weapon, wc = WEAPON_COLORS[wi], a0 = Math.atan2(dy, dx);
+    const mx = p.x + dx * (p.r + 8), my = p.y + dy * (p.r + 8);
+    let cd;
+    if (wi === 3) { // Abanico de Mecha: 5 perdigones + retroceso
+      for (let i = 0; i < SHOTGUN.n; i++) {
+        const a = a0 + (-SHOTGUN.spread / 2 + SHOTGUN.spread * i / (SHOTGUN.n - 1) + rand(-2, 2)) * deg;
+        v52Bullet(p, mx, my, a, SHOTGUN.speed, SHOTGUN.range / SHOTGUN.speed, SHOTGUN.dmg * p.dmg[3], 4, 3);
+      }
+      p.x -= dx * SHOTGUN.recoil; p.y -= dy * SHOTGUN.recoil;
+      if (MAP.obstacles.length) pushOut(p, p.r);
+      p.x = clamp(p.x, p.r, W - p.r); p.y = clamp(p.y, p.r, H - p.r);
+      G.particles.spray(mx, my, dx, dy, wc, 8, 0.7, 260, 4, 0.2);
+      cd = SHOTGUN.cd * p.cdm[3];
+    } else if (wi === 4) { // Esquirla Prisma: rebota y atraviesa
+      const b = v52Bullet(p, mx, my, a0, SHARD.speed, SHARD.life, SHARD.dmg * p.dmg[4], 5, 4);
+      b.bounces = SHARD.bounces; b.pierce = SHARD.pierce; b.hit = new Set();
+      G.particles.spray(mx, my, dx, dy, wc, 3, 0.5, 180, 3, 0.15);
+      cd = SHARD.cd * p.cdm[4];
+    } else if (wi === 5) { // Escolta Halcón: lanza un orbe
+      p.orbs--; p.orbRegen = 0;
+      v52Bullet(p, p.x + dx * ORB.orbit * 0.6, p.y + dy * ORB.orbit * 0.6, a0, ORB.speed, ORB.life, ORB.dmg * p.dmg[5], ORB.r, 5);
+      cd = ORB.cd * p.cdm[5];
+    } else if (wi === 6) { // Arco de Orsini: hitscan en cadena
+      fireArc(p, mx, my, dx, dy);
+      if (p === G.player) G.stats.shots++;
+      G.stats.shotsByW[6]++;
+      cd = ARC.cd * p.cdm[6];
+    } else { // Lanza de Lumen: un tick del rayo
+      fireLance(p, mx, my, dx, dy);
+      p.lanceE -= LANCE.tick;
+      if (p.lanceE <= 0) { p.lanceE = 0; p.lanceLock = LANCE.recharge; }
+      G.stats.shotsByW[7]++;
+      cd = LANCE.tick;
+    }
+    if (p.overdrive > 0 && wi !== 7) cd *= OVERDRIVE.cad; // Sobremarcha: cadencia +33 % (la Lanza no)
+    p.usedW.add(wi);
+    const carry = Math.min(0, p.wcd[wi]);
+    p.wcd[wi] = cd + carry;
+    p.gcd = Math.min(cd, p.rapid > 0 ? GLOBAL_CD_RAPID : GLOBAL_CD) + Math.min(0, p.gcd);
+  }
+  // habilidad equipada (E / botón HAB). Solo en el modo solo (el online PROTO 2 no tiene habilidades).
+  function useAbility(p) {
+    const h = HG.HABILIDADES[p.hab];
+    if (!h || p.habCd > 0 || p.hp <= 0 || G.state !== 'play') return false;
+    if (NET.mode !== 'solo') { G.popup(p.x, p.y - 30, TXT.habOnline, DIM); return false; }
+    p.habCd = h.recarga;
+    const col = h.color;
+    if (p.hab === 'pulso_prisma') {
+      const r2 = PULSE_RADIUS * PULSE_RADIUS, n0 = G.ebullets.length;
+      G.ebullets = G.ebullets.filter((b) => (b.x - p.x) ** 2 + (b.y - p.y) ** 2 > r2);
+      G.stats.pulseErased += n0 - G.ebullets.length;
+      for (const m of G.missiles) if (!m.dead && (m.x - p.x) ** 2 + (m.y - p.y) ** 2 <= r2) killMissile(m, true);
+      for (const e of G.enemies) {
+        const dx = e.x - p.x, dy = e.y - p.y, d2 = dx * dx + dy * dy;
+        if (!e.alive || d2 <= 1 || d2 > r2) continue;
+        const [nx, ny] = norm(dx, dy), sp = Math.max(120, Math.hypot(e.vx, e.vy));
+        e.x += nx * PULSE_PUSH; e.y += ny * PULSE_PUSH; e.vx = nx * sp; e.vy = ny * sp;
+        if (MAP.obstacles.length) pushOut(e, e.r);
+      }
+      G.particles.ring(p.x, p.y, col, PULSE_RADIUS, 0.45, 5);
+      G.particles.burst(p.x, p.y, col, 26, 260, 5);
+      G.addShake(4);
+    } else if (p.hab === 'senuelo_halcon') {
+      G.decoys.push({ x: p.x, y: p.y, t: DECOY_TIME, hp: DECOY_HP, owner: p.id, pulse: 0 });
+      G.particles.ring(p.x, p.y, col, 60, 0.4, 3);
+    } else if (p.hab === 'sobremarcha') {
+      p.overdrive = OVERDRIVE.time;
+      G.particles.ring(p.x, p.y, col, 70, 0.4, 3);
+    }
+    G.stats.habUsed[p.hab] = (G.stats.habUsed[p.hab] || 0) + 1;
+    if (p === G.player) G.popup(p.x, p.y - 34, `¡${h.nombre}!`, col);
+    return true;
+  }
+  function decoyNear(x, y) { // el señuelo más cercano, si está a menos de DECOY_PULL
+    let best = null, bd = DECOY_PULL * DECOY_PULL;
+    for (const d of G.decoys) { const dd = (d.x - x) ** 2 + (d.y - y) ** 2; if (dd < bd) { bd = dd; best = d; } }
+    return best;
+  }
+  function tickV52(dt) { // orbes (contacto y bloqueo de balas) y señuelos
+    for (const p of G.players) {
+      if (p.hp <= 0 || p.weapon !== 5 || p.orbs <= 0) continue;
+      const orbs = orbPositions(p);
+      orbs.forEach(([ox, oy], i) => {
+        if (p.orbCds[i] > 0) return;
+        for (const e of G.enemies) {
+          if (e.alive && (e.x - ox) ** 2 + (e.y - oy) ** 2 < (e.r + ORB.r) ** 2) { hitTarget({ k: 'e', o: e }, ORB.contact * p.dmg[5], p.id); p.orbCds[i] = ORB.contactCd; break; }
+        }
+        const b = G.boss;
+        if (p.orbCds[i] <= 0 && b && b.vulnerable && (b.x - ox) ** 2 + (b.y - oy) ** 2 < (b.r + ORB.r) ** 2) { hitTarget({ k: 'b', o: b }, ORB.contact * p.dmg[5], p.id); p.orbCds[i] = ORB.contactCd; }
+      });
+      let used = 0;
+      const keep = [];
+      for (const eb of G.ebullets) {
+        if (used < orbs.length && orbs.some(([ox, oy]) => (eb.x - ox) ** 2 + (eb.y - oy) ** 2 < (eb.r + ORB.r) ** 2)) {
+          used++; G.particles.burst(eb.x, eb.y, WEAPON_COLORS[5], 6, 120, 3); continue;
+        }
+        keep.push(eb);
+      }
+      if (used) { G.ebullets = keep; p.orbs = Math.max(0, p.orbs - used); p.orbRegen = 0; G.stats.orbBlocks += used; }
+    }
+    if (G.decoys.length) {
+      const col = HG.HABILIDADES.senuelo_halcon.color;
+      for (const dc of G.decoys) {
+        dc.t -= dt; dc.pulse -= dt;
+        if (dc.pulse <= 0) { dc.pulse = 0.35; G.particles.ring(dc.x, dc.y, col, 34, 0.3, 2); }
+        for (const e of G.enemies) if (e.alive && (e.x - dc.x) ** 2 + (e.y - dc.y) ** 2 < (e.r + 14) ** 2) { killEnemy(e, false); dc.hp--; }
+        G.ebullets = G.ebullets.filter((eb) => { if ((eb.x - dc.x) ** 2 + (eb.y - dc.y) ** 2 < (eb.r + 14) ** 2) { dc.hp--; return false; } return true; });
+        if (dc.hp <= 0 || dc.t <= 0) G.particles.burst(dc.x, dc.y, col, 18, 200, 4);
+      }
+      G.decoys = G.decoys.filter((d) => d.hp > 0 && d.t > 0);
+    }
+    for (const a of G.arcs) a.t -= dt;
+    G.arcs = G.arcs.filter((a) => a.t > 0);
+  }
+  // armas que puedo elegir: campaña = las del nivel; online = las 3 de siempre; solo = las 3 + las nuevas que tenga
+  function weaponAvail(w) {
+    if (w < 0 || w >= WEAPONS.length) return false;
+    if (G.camp) return G.camp.weapons.includes(w);
+    if (NET.mode !== 'solo') return w < N_NET_WEAPONS;
+    return w < 3 || !PERFIL.active || PERFIL.weaponUnlocked(HG.WEAPON_IDS[w]);
+  }
   // explosión del RPG: RPG_SPLASH a todo lo que esté a <= RPG_RADIUS del punto (centro), y el impacto directo
   // suma el daño del cohete. Al jefe le pega una sola vez por cohete. A los jugadores, nunca.
   function rpgExplode(b, x, y, direct) {
@@ -1562,17 +1913,21 @@
     // jugadores
     for (const p of G.players) {
       // cada arma recarga aunque no la tengas; baja de 0 como mucho un cuadro (ese sobrante se arrastra al disparar)
-      for (let i = 0; i < 3; i++) p.wcd[i] = p.wcd[i] > 0 ? p.wcd[i] - dt : 0;
+      for (let i = 0; i < p.wcd.length; i++) p.wcd[i] = p.wcd[i] > 0 ? p.wcd[i] - dt : 0;
       p.gcd = p.gcd > 0 ? p.gcd - dt : 0;
+      tickPlayerV52(p, dt);
       if (p.hp <= 0) { p.firing = false; continue; }
       const inp = p === G.player ? localInp : remoteInput(p);
-      if (inp.w !== undefined && inp.w !== p.weapon && inp.w >= 0 && inp.w < WEAPONS.length) {
+      if (inp.w !== undefined && inp.w !== p.weapon && inp.w >= 0 && inp.w < (NET.mode === 'solo' ? WEAPONS.length : N_NET_WEAPONS)) {
         p.weapon = inp.w | 0;
         if (p === G.player) G.popup(p.x, p.y - 30, fmt(TXT.armaCambio, { arma: TXT.arma[p.weapon] }), WHITE);
       }
-      const ox = p.x, oy = p.y;
+      const ox = p.x, oy = p.y, sp0 = p.speed;
+      p.speed = sp0 * speedMult(p) * (G.camp && p === G.player ? G.camp.speedMult(p) : 1); // v5.2: Lanza / Sobremarcha / corrientes
       if (G.camp && p === G.player) G.camp.movePlayer(p, inp, dt); // campaña: Impulso
       else stepMove(p, inp.mx, inp.my, dt);
+      p.speed = sp0;
+      if (p === G.player && G.habReq) { G.habReq = false; useAbility(p); }
       if (Math.hypot(inp.ax - p.x, inp.ay - p.y) > 2) p.angle = Math.atan2(inp.ay - p.y, inp.ax - p.x);
       p.invuln = Math.max(0, p.invuln - dt);
       if (p.shieldS > 0) { p.shieldCd = Math.max(0, p.shieldCd - dt); p.shield = p.shieldCd <= 0; }
@@ -1587,9 +1942,10 @@
       }
       p.firing = !!inp.fire;
       // (1e-6: que 1/12 s no se pierda un cuadro por redondeo; la pistola queda igual que la v3)
-      if (inp.fire && p.wcd[p.weapon] <= 1e-6 && p.gcd <= 1e-6) fire(p, inp.ax, inp.ay);
+      if (inp.fire && canFire(p)) fire(p, inp.ax, inp.ay);
     }
     G.firing = localInp.fire;
+    G.habReq = false;
 
     // reaparición (2 s) y, en co-op, revivir a los "fuera" (12 s) si queda alguien adentro
     const anyIn = G.players.some((p) => !p.out);
@@ -1609,6 +1965,7 @@
       for (let s = 0; s < steps && b.life > 0; s++) stepBullet(b, sdt);
     }
     G.bullets = G.bullets.filter((b) => b.life > 0);
+    tickV52(dt);
     // estela del cohete: local (el cliente la dibuja solo con su copia del cohete; si se mandara, saldría doble)
     for (const b of G.bullets) if (b.w === 2 && Math.random() < 0.8) G.particles.trail(b.x - b.vx * 0.03, b.y - b.vy * 0.03, ORANGE, 4, 0.35, true);
     G.mines = G.mines.filter((m) => !m.dead);
@@ -1616,16 +1973,34 @@
 
     // enemigos comunes
     for (const e of G.enemies) {
-      e.angle += e.spin * dt;
+      if (e.kind !== 'escudero') e.angle += e.spin * dt;
       e.flash = Math.max(0, e.flash - dt);
-      const coreT = G.camp ? G.camp.enemyTarget(e) : null; // campaña: los que van al núcleo
+      const coreT = G.camp ? G.camp.enemyTarget(e) : null; // campaña: los que van al núcleo / patrullas / luces
+      const tgt = () => coreT || (G.decoys.length && decoyNear(e.x, e.y)) || nearestAlive(e.x, e.y);
       if (e.kind === 'hunter') {
-        const t = coreT || nearestAlive(e.x, e.y);
+        const t = tgt();
         if (t) {
           const [nx, ny] = norm(t.x - e.x, t.y - e.y);
           const k = Math.min(1, 2.5 * dt);
           e.vx += (nx * e.huntSpeed - e.vx) * k;
           e.vy += (ny * e.huntSpeed - e.vy) * k;
+        }
+      } else if (e.kind === 'escudero') { // gira despacio hacia el objetivo y avanza con el escudo adelante
+        const t = tgt();
+        if (t && (t.x - e.x) ** 2 + (t.y - e.y) ** 2 > 1) {
+          const diff = ((Math.atan2(t.y - e.y, t.x - e.x) - e.angle + Math.PI) % TAU + TAU) % TAU - Math.PI;
+          e.angle += clamp(diff, -ESCUDERO_TURN * dt, ESCUDERO_TURN * dt);
+        }
+        const k = Math.min(1, 3 * dt);
+        e.vx += (Math.cos(e.angle) * ESCUDERO_SPEED - e.vx) * k; e.vy += (Math.sin(e.angle) * ESCUDERO_SPEED - e.vy) * k;
+      } else if (e.kind === 'apagador') { // va hacia la luz más cercana; pegado, no se mueve
+        if (e.stick) { e.vx = 0; e.vy = 0; }
+        else {
+          const t = tgt();
+          if (t && (t.x - e.x) ** 2 + (t.y - e.y) ** 2 > 1) {
+            const [nx, ny] = norm(t.x - e.x, t.y - e.y), k = Math.min(1, 2 * dt);
+            e.vx += (nx * APAGADOR_SPEED - e.vx) * k; e.vy += (ny * APAGADOR_SPEED - e.vy) * k;
+          }
         }
       }
       e.x += e.vx * dt; e.y += e.vy * dt;
@@ -1781,12 +2156,22 @@
   function stepBullet(b, dt) {
     b.x += b.vx * dt; b.y += b.vy * dt; b.life -= dt;
     const rpg = b.w === 2;
+    if (b.bounces > 0 && (b.x < 0 || b.x > W || b.y < 0 || b.y > H)) { // v5.2 Esquirla: rebota en los bordes
+      if (b.x < 0 || b.x > W) { b.vx = -b.vx; b.x = clamp(b.x, 0, W); }
+      if (b.y < 0 || b.y > H) { b.vy = -b.vy; b.y = clamp(b.y, 0, H); }
+      shardBounce(b);
+    }
     if (b.x < 0 || b.x > W || b.y < 0 || b.y > H) { // el RPG explota en el borde (spec §8, 1.21)
       if (rpg) { const x = clamp(b.x, 0, W), y = clamp(b.y, 0, H); bulletGone(b); rpgExplode(b, x, y, null); }
       else if (b.x < -20 || b.x > W + 20 || b.y < -20 || b.y > H + 20) b.life = 0;
       return;
     }
     if (b.life <= 0) { if (rpg) { bulletGone(b); rpgExplode(b, b.x, b.y, null); } return; }
+    if (b.bounces > 0 && MAP.obstacles.length && obstacleHit(b.x, b.y, b.r)) { // v5.2 Esquirla: rebota en los pilares
+      const n = pushOut(b, b.r);
+      if (n) { const dd = b.vx * n[0] + b.vy * n[1]; b.vx -= 2 * dd * n[0]; b.vy -= 2 * dd * n[1]; }
+      shardBounce(b);
+    }
     if (MAP.obstacles.length && obstacleHit(b.x, b.y, b.r)) { // los pilares frenan las balas; el RPG explota ahí
       bulletGone(b, rpg ? null : MAP.obsGlow);
       if (rpg) rpgExplode(b, b.x, b.y, null);
@@ -1794,9 +2179,16 @@
     }
     const hitObj = (o, r) => (o.x - b.x) ** 2 + (o.y - b.y) ** 2 < (r + b.r) ** 2;
     for (const e of G.enemies) {
-      if (!e.alive || !hitObj(e, e.r)) continue;
+      if (!e.alive || e.campShield || !hitObj(e, e.r) || (b.hit && b.hit.has(e.id))) continue;
+      if (e.kind === 'escudero' && shieldBlocks(e, b.vx, b.vy)) { // v5.2: el escudo frena de frente (el cohete explota ahí)
+        G.stats.shieldBlocks++;
+        if (rpg) { bulletGone(b); rpgExplode(b, b.x, b.y, null); return; }
+        bulletGone(b, [200, 235, 255]);
+        return;
+      }
       if (rpg) { bulletGone(b); rpgExplode(b, b.x, b.y, e); return; }
-      bulletGone(b, WHITE);
+      if (b.pierce > 0) { b.pierce--; b.hit.add(e.id); } // v5.2 Esquirla: atraviesa
+      else bulletGone(b, WHITE);
       e.hp -= b.dmg; e.flash = 0.06;
       if (e.hp <= 0.001) killEnemy(e, true, b.owner, false);
       return;
@@ -1826,6 +2218,7 @@
     }
   }
 
+  function shardBounce(b) { b.bounces--; b.dmg *= SHARD.mult; if (b.hit) b.hit.clear(); }
   function updateMines(dt) {
     G.mineOrbit += MINE_SPIN * dt;
     const boss = G.boss;
@@ -2101,7 +2494,7 @@
     if (NET.mode !== 'host') return;
     G.name = cleanName(nameInput.value);
     NET.roster[0].name = G.name;
-    NET.roster[0].lo = PERFIL.loadout();
+    NET.roster[0].lo = netLoadout();
     initRound(NET.roster.map((r, i) => ({ id: r.id, name: r.name, slot: i, lo: r.lo })));
     PERFIL.armorUsed();
     G.round = (G.roundN = (G.roundN || 0) + 1);
@@ -2225,7 +2618,7 @@
       NET.timer = setTimeout(() => { if (!welcomed) fail(rejoin ? 'Se perdió la conexión con el host.' : MSG_P2P); }, 12000);
       const conn = peer.connect(PEER_PREFIX + code, { reliable: true, serialization: 'json' });
       NET.conn = conn;
-      conn.on('open', () => { NET.lastMsg = performance.now(); safeSend(conn, { t: 'h', n: G.name, v: PROTO, k: NET.key, hg: HG_PROTO, lo: PERFIL.loadout() }); });
+      conn.on('open', () => { NET.lastMsg = performance.now(); safeSend(conn, { t: 'h', n: G.name, v: PROTO, k: NET.key, hg: HG_PROTO, lo: netLoadout() }); });
       conn.on('data', (d) => {
         if (NET.conn !== conn) return;
         if (d && d.t === 'w') { welcomed = true; clearTimeout(NET.timer); }
@@ -2564,7 +2957,7 @@
     hasTouch: navigator.maxTouchPoints > 0 || 'ontouchstart' in window,
     move: null, // {id, ox, oy, x, y} en coordenadas de pantalla (CSS px)
     fire: null,
-    wTap: 0, wheelT: 0, dTap: 0, dashHeld: false,
+    wTap: 0, wheelT: 0, dTap: 0, hTap: 0, dashHeld: false,
   };
   // arma que tengo en la mano (la mía al instante; la simulación del host la confirma)
   function myWeapon() { return G.myWeapon | 0; }
@@ -2572,10 +2965,10 @@
     if (G.state !== 'play' || !G.player || G.player.hp <= 0) return;
     const L = WEAPONS.length;
     let nw = ((w % L) + L) % L;
-    if (G.camp) { // campaña: solo las armas del nivel (la rueda / Q / el botón saltan a la siguiente que haya)
-      for (let i = 0; step && i < L && !G.camp.weapons.includes(nw); i++) nw = (((nw + step) % L) + L) % L;
-      if (!G.camp.weapons.includes(nw)) return;
-    }
+    // solo las armas que hay (campaña: las del nivel; online: las 3 de siempre; solo: las que tengas).
+    // La rueda / Q / el botón saltan a la siguiente disponible.
+    for (let i = 0; step && i < L && !weaponAvail(nw); i++) nw = (((nw + step) % L) + L) % L;
+    if (!weaponAvail(nw)) return;
     if (nw === G.myWeapon) return;
     G.myWeapon = nw;
     if (NET.mode === 'client') G.popups.push({ x: G.player.x, y: G.player.y - 30, txt: fmt(TXT.armaCambio, { arma: TXT.arma[nw] }), c: WHITE, big: false, life: 0.8, max: 0.8 });
@@ -2596,6 +2989,13 @@
     if (G.state !== 'play') return;
     const wb = weaponButton();
     if (Math.hypot(e.clientX - wb.x, e.clientY - wb.y) < wb.r + 10) { input.wTap = performance.now(); switchWeapon(myWeapon() + 1, 1); return; }
+    const hb = habButton(); // v5.2: botón HAB
+    if (hb && Math.hypot(e.clientX - hb.x, e.clientY - hb.y) < hb.r + 10) { input.hTap = performance.now(); G.habReq = true; return; }
+    { // v5.2: tocar un arma de la barra de abajo la elige
+      const [wx, wy] = toWorld(e.clientX, e.clientY);
+      const hit = (G.wbar || []).find((q) => wx >= q[1] - 4 && wx <= q[1] + q[3] + 4 && wy >= q[2] - 8 && wy <= q[2] + q[4] + 8);
+      if (hit) { input.wTap = performance.now(); switchWeapon(hit[0]); return; }
+    }
     if (G.camp && G.camp.mecs.has('impulso')) { // campaña: botón IMPULSO
       const d = dashButton();
       if (Math.hypot(e.clientX - d.x, e.clientY - d.y) < d.r + 10) { input.dTap = performance.now(); G.camp.dashReq = true; return; }
@@ -2726,6 +3126,12 @@
         ctx.stroke();
       }
       ctx.lineCap = 'butt';
+      for (const b of G.bullets) { // v5.2: perdigón / esquirla / orbe lanzado
+        if (!(b.w >= 3)) continue;
+        const c = WEAPON_COLORS[b.w] || CYAN;
+        if (b.w === 4) { const [nx, ny] = norm(b.vx, b.vy); poly([[b.x + nx * 8, b.y + ny * 8], [b.x - ny * 4, b.y + nx * 4], [b.x - nx * 6, b.y - ny * 6], [b.x + ny * 4, b.y - nx * 4]]); ctx.fillStyle = rgb(c); ctx.fill(); ctx.strokeStyle = rgb(WHITE); ctx.lineWidth = 1; ctx.stroke(); }
+        else { ctx.fillStyle = rgb(c); circle(b.x, b.y, b.r); ctx.fill(); ctx.fillStyle = rgb(WHITE); circle(b.x, b.y, Math.max(1.5, b.r * 0.4)); ctx.fill(); }
+      }
       for (const b of G.bullets) { // cohete del RPG
         if (b.w !== 2) continue;
         const [nx, ny] = norm(b.vx, b.vy);
@@ -2734,6 +3140,7 @@
         ctx.strokeStyle = rgb(WHITE); ctx.lineWidth = 1.5; ctx.stroke();
       }
     }
+    drawV52();
     G.particles.draw();
     if (G.ebullets.length) {
       additive(() => { for (const b of G.ebullets) glow(b.x, b.y, b.r * 3.4, b.c, 0.8); });
@@ -2833,17 +3240,24 @@
   }
   // arma actual (abajo al medio) y, con el RPG, la barrita de recarga
   function drawWeaponHud(p) {
-    const cur = myWeapon(), y = H - 24;
-    const labels = TXT.arma.map((n, i) => `${i + 1} ${n}`);
-    ctx.font = `bold 14px ${FONT}`;
-    const ws = labels.map((l) => ctx.measureText(l).width + 18), total = ws.reduce((a, b) => a + b, 0);
+    const cur = myWeapon(), touch = input.hasTouch || input.mode === 'touch';
+    const avail = WEAPONS.map((_, i) => i).filter((i) => weaponAvail(i) || i === cur);
+    const long = avail.length <= 3 && !touch; // con más de 3 armas (o en táctil) van los nombres cortos
+    const fs = touch ? 15 : 14, bh = touch ? 28 : 21, y = H - (touch ? 30 : 24);
+    const labels = avail.map((i) => `${i + 1} ${long ? TXT.arma[i] : TXT.armaCorta[i]}`);
+    ctx.font = `bold ${fs}px ${FONT}`;
+    const ws = labels.map((l) => ctx.measureText(l).width + (touch ? 26 : 18)), total = ws.reduce((a, b) => a + b, 0);
     let x = W / 2 - total / 2;
-    labels.forEach((l, i) => {
-      const on = i === cur;
-      if (on) { ctx.fillStyle = rgb(CYAN, 0.18); ctx.fillRect(x, y - 3, ws[i] - 6, 21); ctx.strokeStyle = rgb(CYAN); ctx.lineWidth = 1.5; ctx.strokeRect(x, y - 3, ws[i] - 6, 21); }
-      text(l, x + (ws[i] - 6) / 2, y, 14, on ? WHITE : DIM, { align: 'center', bold: on, alpha: on ? 1 : 0.7 });
-      x += ws[i];
+    G.wbar = [];
+    labels.forEach((l, k) => {
+      const i = avail[k], on = i === cur, wc = WEAPON_COLORS[i] || CYAN;
+      G.wbar.push([i, x, y - 3, ws[k] - 6, bh]);
+      if (touch && !on) { ctx.strokeStyle = rgb(DIM, 0.5); ctx.lineWidth = 1; ctx.strokeRect(x, y - 3, ws[k] - 6, bh); }
+      if (on) { ctx.fillStyle = rgb(wc, 0.18); ctx.fillRect(x, y - 3, ws[k] - 6, bh); ctx.strokeStyle = rgb(wc); ctx.lineWidth = 1.5; ctx.strokeRect(x, y - 3, ws[k] - 6, bh); }
+      text(l, x + (ws[k] - 6) / 2, y + (bh - 21) / 2, fs, on ? WHITE : (WEAPON_COLORS[i] ? wc : DIM), { align: 'center', bold: on, alpha: on ? 1 : 0.7 });
+      x += ws[k];
     });
+    drawHudV52(p, cur, W / 2 + total / 2 + 10, y);
     G.hudWeapon = fmt(TXT.armaHud, { arma: TXT.arma[cur] }); // (lo leen los tests)
     if (cur === 2) { // barrita de recarga del RPG: llena = listo
       const full = (p.rapid > 0 ? WEAPONS[2].cdRapid : WEAPONS[2].cd) * (p.cdm ? p.cdm[2] : 1);
@@ -2856,6 +3270,60 @@
     } else G.hudRpg = -1;
   }
 
+  // v5.2: energía de la Lanza, orbes de la Escolta y la habilidad (E) con su recarga
+  function drawHudV52(p, cur, x, y) {
+    if (cur === 7) {
+      const k = clamp(p.lanceE / LANCE.energy, 0, 1), bx = W / 2 - 60, by = y - 12;
+      ctx.fillStyle = 'rgba(25,20,40,0.9)'; ctx.fillRect(bx, by, 120, 6);
+      ctx.fillStyle = rgb(p.lanceLock > 0 ? RED : WEAPON_COLORS[7]); ctx.fillRect(bx, by, 120 * k, 6);
+      if (p.lanceLock > 0) text(TXT.recalentada, bx + 128, by - 4, 12, RED);
+      G.hudLance = k;
+    } else if (cur === 5) {
+      for (let k = 0; k < ORB.max; k++) { ctx.fillStyle = rgb(k < p.orbs ? WEAPON_COLORS[5] : [40, 50, 70]); circle(W / 2 - 22 + k * 22, y - 10, 6); ctx.fill(); ctx.strokeStyle = rgb(WHITE); ctx.lineWidth = 1; ctx.stroke(); }
+    }
+    const h = HG.HABILIDADES[p.hab];
+    G.hudHab = h ? { id: p.hab, cd: +p.habCd.toFixed(2) } : null;
+    if (!h || NET.mode !== 'solo') return;
+    const frac = 1 - clamp(p.habCd / Math.max(0.1, h.recarga), 0, 1), cx = Math.min(W - 150, x + 18), cy = y + 9;
+    ART.drawAbilityIcon(ctx, p.hab, cx, cy, 28, frac, frac >= 1 ? 'lista' : 'recarga', bg.pulse || 0);
+    text(frac >= 1 ? `E  ${h.nombre}` : `E  ${Math.ceil(p.habCd)} s`, cx + 20, cy - 8, 13, frac >= 1 ? WHITE : DIM);
+  }
+  // v5.2: señuelos, orbes, rayo de la Lanza, arcos y Sobremarcha (encima de las balas)
+  function drawV52() {
+    const now = performance.now() / 1000;
+    for (const dc of G.decoys) {
+      const col = HG.HABILIDADES.senuelo_halcon.color;
+      additive(() => glow(dc.x, dc.y, 30, col, 0.4));
+      if (Math.floor(now * 12) % 3) {
+        poly([[0, 19], [2.5, 14], [Math.PI, 6], [-2.5, 14]].map(([a, r]) => [dc.x + Math.cos(-Math.PI / 2 + a) * r, dc.y + Math.sin(-Math.PI / 2 + a) * r]));
+        ctx.strokeStyle = rgb(col); ctx.lineWidth = 2; ctx.stroke();
+      }
+    }
+    for (const p of G.players) {
+      if (p.hp <= 0) continue;
+      if (p.weapon === 5) for (const [ox, oy] of orbPositions(p)) {
+        additive(() => glow(ox, oy, 16, WEAPON_COLORS[5], 0.7));
+        ctx.fillStyle = rgb(WEAPON_COLORS[5]); circle(ox, oy, ORB.r); ctx.fill();
+        ctx.fillStyle = rgb(WHITE); circle(ox, oy, 2); ctx.fill();
+      }
+      if (p.weapon === 7 && p.beamOn > 0 && p.beamEnd) {
+        const ax = p.x + Math.cos(p.angle) * (p.r + 8), ay = p.y + Math.sin(p.angle) * (p.r + 8), [ex, ey] = p.beamEnd, wc = WEAPON_COLORS[7];
+        ctx.lineCap = 'round';
+        ctx.strokeStyle = rgb(wc); ctx.lineWidth = 7 + 2 * Math.sin(now * 40); ctx.beginPath(); ctx.moveTo(ax, ay); ctx.lineTo(ex, ey); ctx.stroke();
+        ctx.strokeStyle = rgb(WHITE); ctx.lineWidth = 2; ctx.beginPath(); ctx.moveTo(ax, ay); ctx.lineTo(ex, ey); ctx.stroke();
+        ctx.lineCap = 'butt';
+        additive(() => glow(ex, ey, 22, wc, 0.9));
+      }
+      if (p.overdrive > 0) { ctx.strokeStyle = rgb(HG.HABILIDADES.sobremarcha.color); ctx.lineWidth = 2; circle(p.x, p.y, p.r + 12 + 2 * Math.sin(now * 18)); ctx.stroke(); }
+    }
+    for (const a of G.arcs) {
+      ctx.globalAlpha = clamp(a.t / 0.14, 0, 1);
+      ctx.strokeStyle = rgb(a.c); ctx.lineWidth = 4; ctx.beginPath();
+      a.pts.forEach((q, i) => (i ? ctx.lineTo(q[0], q[1]) : ctx.moveTo(q[0], q[1]))); ctx.stroke();
+      ctx.strokeStyle = rgb(WHITE); ctx.lineWidth = 1.5; ctx.stroke();
+      ctx.globalAlpha = 1;
+    }
+  }
   function drawCrosshair() {
     if (G.state !== 'play' || !G.player || G.player.hp <= 0) return;
     let x, y;
@@ -2899,6 +3367,12 @@
     const m = 30 + STICK_R;
     return { x: view.w - m, y: view.h - m - 10 - STICK_R - 8 - 52, r: 30 };
   }
+  function habButton() { // v5.2: a la izquierda del botón de arma (solo si hay una habilidad equipada y se juega solo)
+    const p = G.player;
+    if (!p || !HG.HABILIDADES[p.hab] || NET.mode !== 'solo') return null;
+    const b = weaponButton();
+    return { x: b.x - 76, y: b.y, r: 30 };
+  }
   function drawTouchControls() {
     if (G.state !== 'play' || !(input.hasTouch || input.mode === 'touch')) return;
     const m = 30 + STICK_R;
@@ -2909,7 +3383,15 @@
     ctx.fillStyle = rgb(CYAN, on ? 0.45 : 0.15); circle(b.x, b.y, b.r); ctx.fill();
     ctx.strokeStyle = rgb(CYAN, 0.9); ctx.lineWidth = 2; ctx.stroke();
     text(TXT.armaBoton, b.x, b.y - 12, 10, CYAN, { align: 'center', base: 'middle', bold: true });
-    text(`${myWeapon() + 1} ${['PIST', 'AMET', 'RPG'][myWeapon()]}`, b.x, b.y + 6, 12, WHITE, { align: 'center', base: 'middle', bold: true });
+    text(`${myWeapon() + 1} ${TXT.armaCorta[myWeapon()]}`, b.x, b.y + 6, 12, WHITE, { align: 'center', base: 'middle', bold: true });
+    const hb = habButton(); // v5.2: botón HAB con el ícono y la recarga
+    if (hb) {
+      const p = G.player, h = HG.HABILIDADES[p.hab], frac = 1 - clamp(p.habCd / Math.max(0.1, h.recarga), 0, 1), on = performance.now() - input.hTap < 150;
+      ctx.fillStyle = rgb(h.color, on ? 0.45 : frac >= 1 ? 0.18 : 0.06); circle(hb.x, hb.y, hb.r); ctx.fill();
+      ctx.strokeStyle = rgb(h.color, frac >= 1 ? 0.95 : 0.4); ctx.lineWidth = 2; ctx.stroke();
+      ART.drawAbilityIcon(ctx, p.hab, hb.x, hb.y - 4, 28, frac, frac >= 1 ? 'lista' : 'recarga', bg.pulse || 0);
+      text(frac >= 1 ? TXT.habBoton : `${Math.ceil(p.habCd)} s`, hb.x, hb.y + 20, 10, frac >= 1 ? WHITE : DIM, { align: 'center', base: 'middle', bold: true });
+    }
     if (G.camp && G.camp.mecs.has('impulso')) { // campaña: botón IMPULSO
       const d = dashButton(), rdy = G.camp.dashCd <= 0, on = performance.now() - input.dTap < 150;
       ctx.fillStyle = rgb(PINK, on ? 0.5 : rdy ? 0.22 : 0.08); circle(d.x, d.y, d.r); ctx.fill();
@@ -3237,8 +3719,10 @@
       else if ((st === 'over' || st === 'win') && !endEl.classList.contains('hidden') && NET.mode === 'solo') toMenu();
     } else if (c === 'KeyR' && inGame()) {
       restartPressed();
-    } else if (/^(Digit|Numpad)[123]$/.test(c)) {
+    } else if (/^(Digit|Numpad)[1-8]$/.test(c)) { // v5.2: 4-8 = armas nuevas
       switchWeapon(+c.slice(-1) - 1);
+    } else if (c === 'KeyE' && st === 'play') { // v5.2: habilidad equipada
+      G.habReq = true;
     } else if (c === 'KeyQ') {
       switchWeapon(myWeapon() + 1, 1);
     } else if (c === 'Escape') {
@@ -3312,17 +3796,24 @@
   const CAMP_RADIO_BASE = 3.5, CAMP_RADIO_PER_CHAR = 0.05, CAMP_RADIO_MAX = 6.0, CAMP_RADIO_QUEUE = 2;
   const CAMP_ALLY_BULLET_SPEED = 560, CAMP_WAVE_CAP = 14, CAMP_ENEMY_CAP = 20;
   const CAMP_RUN_BONUS = ['sin_perder_vidas', 'tiempo_max_s', 'alas_sin_caer'];
-  const CAMP_KIND_PLURAL = { orb: 'orbes', spinner: 'spinners', hunter: 'hunters' };
+  const CAMP_KIND_PLURAL = { orb: 'orbes', spinner: 'spinners', hunter: 'hunters', torreta: 'torretas', escudero: 'escuderos', apagador: 'apagadores' };
+  // v5.2 (actos 4-6)
+  const CAMP_DARK_ALPHA = 235 / 255, CAMP_LIGHT_OBJ = 0.11, CAMP_DARK_MAX_LIGHTS = 10;
+  const SIGILO_DET = 0.17, SIGILO_DET_FIRE = 0.34, SIGILO_FIRE_S = 2.0;
+  const ALLY_TUR_HP = 6, ALLY_TUR_CD = 0.8, ALLY_TUR_RANGE = 420;
+  const MAP_LASER_HALF_W = 6, SWITCH_CD = 1.5, GATE_ANIM = 0.4, APAGADOR_DARK_PX = 110, APAGADOR_DRAIN = 1.0, APAGON_SWAY = 60;
+  const CAMP_FRONT_CROSS_MARGIN = 0.5;
+  const CAMP_ELEM_OK = ['corrientes', 'compuertas', 'interruptores', 'laseres'];
   const CAMP_ARMOR_IMPULSO = { halcon: 0.85, lumen: 0.7 }; // armaduras de la compu que acortan la recarga del Impulso
-  const CAMP_OBJ_OK = ['sobrevivir', 'eliminar', 'oleadas', 'terminales', 'proteger', 'jefe'];
-  const CAMP_MEC_OK = ['impulso', 'anillos', 'alas'];
-  const CAMP_BOSSES = { warden: Warden, seeker: Seeker, titan: Titan };
+  const CAMP_OBJ_OK = ['sobrevivir', 'eliminar', 'oleadas', 'terminales', 'proteger', 'jefe', 'frente', 'escoltar', 'escapar', 'infiltrar', 'hackear'];
+  const CAMP_MEC_OK = ['impulso', 'anillos', 'alas', 'frente', 'corrientes', 'escudo', 'oscuridad', 'compuertas'];
+  const CAMP_BOSSES = { warden: Warden, seeker: Seeker, titan: Titan, apagon: Apagon };
   const CAMP_TXT_FALLBACK = {
     guardado_corrupto: 'No se pudo leer el guardado; se hizo una copia.',
     guardado_no_disponible: 'No se puede guardar: se juega igual, pero el progreso no queda.',
     fin_etapa_a: 'Fin de la Etapa A: ¡seguí atento!', registro_guardado: '¡Registro nuevo guardado!',
     registro_proximamente: 'Se leen en una próxima actualización.', bonus_perdido: 'Bonus perdido en este intento',
-    taller_saldo: 'Tenés {n} ✦', ver_intro: 'Ver intro', taller_vacio: 'Completá un nivel para ver las mejoras.',
+    fin_acto_n: 'Fin del Acto {n}: ¡seguí atento!', taller_saldo: 'Tenés {n} ✦', ver_intro: 'Ver intro', taller_vacio: 'Completá un nivel para ver las mejoras.',
   };
   function campTxt(key, kw) {
     let node = CD.textos_ui;
@@ -3331,12 +3822,13 @@
     if (kw) t = t.replace(/\{(\w+)\}/g, (m, k) => (k in kw ? String(kw[k]) : m));
     return t;
   }
-  function campLevelOk(lv) { // lo mismo que camp_level_supported de la compu
+  function campLevelOk(lv) { // lo mismo que camp_level_supported de la compu (v5.2)
     if (!lv.fases || !lv.fases.length || !(lv.mecanicas_activas || []).every((m) => CAMP_MEC_OK.includes(m))) return false;
-    if (lv.oscuridad || lv.fondo_batalla || (lv.elementos_mapa && Object.keys(lv.elementos_mapa).length)) return false;
+    if (Object.entries(lv.elementos_mapa || {}).some(([k, v]) => v && !CAMP_ELEM_OK.includes(k))) return false;
+    if (!(lv.armas_disponibles || ['pistola']).every((a) => HG.WEAPON_IDS.includes(a))) return false;
     for (const f of lv.fases) {
       const o = f.objetivo || {};
-      if (!CAMP_OBJ_OK.includes(o.tipo) || f.sigilo || f.oscuridad) return false;
+      if (!CAMP_OBJ_OK.includes(o.tipo) || f.oscuridad) return false;
       if (o.tipo === 'jefe') {
         const v = ((CD.jefes[o.jefe] || {}).variantes || {})[o.variante];
         if (!CAMP_BOSSES[o.jefe] || !v || v.extras) return false;
@@ -3397,7 +3889,7 @@
       const f = Math.floor(cnum(cp.fase, 0, 0, 99));
       if (f < campLevel(cp.nivel).fases.length) {
         const st = cp.stats && typeof cp.stats === 'object' ? cp.stats : {}, o = {};
-        for (const k of ['tiempo_s', 'vidas_perdidas', 'alas_caidas', 'luces_extra', 'nucleo_frac']) if (k in st) o[k] = Math.round(cnum(st[k], 0, 0, 1e9) * 1000) / 1000;
+        for (const k of ['tiempo_s', 'vidas_perdidas', 'alas_caidas', 'luces_extra', 'nucleo_frac', 'alarmas', 'convoy_frac']) if (k in st) o[k] = Math.round(cnum(st[k], 0, 0, 1e9) * 1000) / 1000;
         out.checkpoint = { nivel: cp.nivel, fase: f, stats: o };
       }
     }
@@ -3465,6 +3957,18 @@
     return lo;
   }
 
+  function campBuildCurrents(md) { // mapa.corrientes[] (normalizado) -> px: rect {x,y,w,h,dx,dy,f} o giro {x,y,r,f}
+    const out = [];
+    for (const c of md.corrientes || []) {
+      const f = c.fuerza_px_s === undefined ? 100 : +c.fuerza_px_s;
+      if (c.tipo === 'rect') {
+        const [dx, dy] = norm(c.dx === undefined ? 1 : +c.dx, +c.dy || 0);
+        if (!dx && !dy) continue;
+        out.push({ tipo: 'rect', x: c.x * W, y: c.y * H, w: c.w * W, h: c.h * H, dx, dy, f });
+      } else if (c.tipo === 'circulo_giro') out.push({ tipo: 'giro', x: c.x * W, y: c.y * H, r: (+c.r || 0.1) * MIN_WH, f });
+    }
+    return out;
+  }
   // ---- un nivel en juego (CampRun de la compu) ----
   class CampRun {
     constructor(slotI, lid, phase, stats) {
@@ -3474,6 +3978,14 @@
       this.phases = this.level.fases;
       const ws = [...new Set((this.level.armas_disponibles || []).map((a) => HG.WEAPON_IDS.indexOf(a)).filter((i) => i >= 0))].sort();
       this.weapons = ws.length ? ws : [0];
+      if (this.weapons.includes(1)) { // v5.2: las armas nuevas que tengas valen donde hay ametralladora
+        const own = new Set((CS.slots[slotI] || {}).armas || []);
+        for (let i = HG.N_BASE_WEAPONS; i < HG.WEAPON_IDS.length; i++) {
+          const wid = HG.WEAPON_IDS[i];
+          if (own.has(wid) || (PERFIL.active && PERFIL.weaponUnlocked(wid))) this.weapons.push(i);
+        }
+        this.weapons = [...new Set(this.weapons)].sort((a, b) => a - b);
+      }
       this.mecs = new Set(this.level.mecanicas_activas || []);
       const imp = (CD.mecanicas.impulso || {}).params || {};
       this.dashCdMax = (campMejoraValue(this.slot, 'impulso_recarga') || 2.5) * (CAMP_ARMOR_IMPULSO[PERFIL.loadout().armadura] || 1);
@@ -3493,7 +4005,326 @@
       this.bonusVoid = this.pi > 0; this.lucesStart = this.lucesExtra; this.log = [];
       const pf = this.phases.find((f) => (f.objetivo || {}).tipo === 'proteger' && f.objetivo.nucleo);
       this.nucleoNombre = pf ? (pf.objetivo.nucleo.nombre || 'Núcleo') : 'Núcleo';
+      // v5.2: convoy, frente, salida, corrientes, torretas, escudo, oscuridad, sigilo, compuertas / interruptores / láseres
+      const cf = this.phases.find((f) => (f.objetivo || {}).tipo === 'escoltar' && f.objetivo.convoy);
+      this.convoyNombre = cf ? (cf.objetivo.convoy.nombre || 'Convoy') : 'Convoy';
+      this.convoyFrac = 'convoy_frac' in st ? +st.convoy_frac : null;
+      this.frontFinal = null; this.escapeTime = null;
+      this.mapDef = MAP.def || {};
+      if (!MAP.baseObs) MAP.baseObs = MAP.obstacles.slice();
+      const el = this.level.elementos_mapa || {};
+      this.currents = this.mecs.has('corrientes') && el.corrientes ? campBuildCurrents(this.mapDef) : [];
+      const tc = (CD.enemigos_nuevos || {}).torreta || {}, td = tc.disparo || {};
+      this.turCfg = { r: +tc.radio_px || 16, hp: +tc.vida || 4, puntos: tc.puntos | 0 || 6, cada: +td.cada_s || 2.4, aviso: +td.aviso_s || 0.6,
+        vel: +td.velocidad_px_s || 220, rb: +td.radio_bala_px || 6, alcance: +td.alcance_px || 520 };
+      this.battle = this.level.fondo_batalla ? { i: (this.level.fondo_batalla.intensidad | 0) || 2, fx: [], t: 0 } : null;
+      this.escudo = this.mecs.has('escudo');
+      this.escRec = campMejoraValue(this.slot, 'escudo_recarga') || 10;
+      const osc = this.level.oscuridad;
+      this.darkBase = osc && typeof osc === 'object' ? (+osc.radio_luz || 0.22) : 0;
+      this.alarmas = st.alarmas | 0;
+      this.gatesDef = el.compuertas ? (this.mapDef.compuertas || []) : [];
+      this.switchDef = el.interruptores ? (this.mapDef.interruptores || []) : [];
+      this.laserDef = el.laseres ? (this.mapDef.laseres || []) : [];
+      this.allyTurrets = []; this.gates = []; this.switches = []; this.lasers = [];
       this.resetPhaseVars();
+      this.v52Reset(true);
+    }
+    bonusName(tipo) { return tipo === 'convoy_mas_de' ? this.convoyNombre : this.nucleoNombre; }
+    speedMult() { return 1; }
+    // ---- v5.2: estado de todo el nivel (compuertas, interruptores, láseres, torretas aliadas) ----
+    v52Reset(full) {
+      if (full || this.pi === 0) this.alarmas = this.pi === 0 ? 0 : this.alarmas;
+      this.gates = this.gatesDef.map((gd) => {
+        const sa = gd.sala || {}, ex = gd.expulsar_hacia || {};
+        return { id: String(gd.id), grupo: String(gd.grupo || gd.id), x: gd.x * W, y: gd.y * H, w: gd.w * W, h: gd.h * H,
+          open: String(gd.inicial || 'cerrada') === 'abierta', col: hex(gd.color || '#4DFFEA'), anim: 0,
+          sala: [(sa.x || 0) * W, (sa.y || 0) * H, (sa.w || 0) * W, (sa.h || 0) * H], exp: [+ex.dx || 0, ex.dy === undefined ? 1 : +ex.dy] };
+      });
+      for (const gt of this.gates) gt.anim = gt.open ? 1 : 0;
+      this.switches = this.switchDef.map((sd) => ({ id: String(sd.id), x: sd.x * W, y: sd.y * H, r: (+sd.r || 0.035) * MIN_WH,
+        abre: sd.abre || [], cierra: sd.cierra || [], col: hex(sd.color || '#4DFFEA'), cd: 0, inside: false }));
+      this.lasers = this.laserDef.map((ld) => ({ x: ld.x * W, y: ld.y * H, len: (+ld.largo || 0.2) * MIN_WH,
+        ang: (+ld.angulo_inicial_grados || 0) * deg, vel: (+ld.vel_grados_s || 0) * deg, on: String(ld.inicial || 'prendido') !== 'apagado' }));
+      this.allyTurrets = []; // si se arranca después de una fase de hackeo, vuelven las torretas de esa fase
+      for (let k = 0; k < Math.min(this.pi, this.phases.length); k++) {
+        const o = this.phases[k].objetivo || {};
+        if (o.tipo === 'hackear') for (const pt of o.torretas || []) this.allyTurrets.push(this.newAlly(pt.x * W, pt.y * H));
+      }
+      this.syncGates();
+    }
+    syncGates() {
+      const base = MAP.baseObs || MAP.obstacles;
+      MAP.obstacles = base.concat(this.gates.filter((g) => !g.open).map((g) => ({ t: 'rect', x: g.x, y: g.y, w: g.w, h: g.h, gate: true })));
+    }
+    newAlly(x, y) { return { x, y, r: this.turCfg.r, hp: ALLY_TUR_HP, max: ALLY_TUR_HP, cd: ALLY_TUR_CD, ang: -Math.PI / 2, flash: 0, ally: true }; }
+    onShieldBroken() { this.event('escudo_roto'); if (this.escudo) G.showBanner(campTxt('escudo_roto'), [168, 232, 255], 1.6); }
+    lightFrac() {
+      let b = this.darkBase;
+      if (this.darkBoostT > 0) b = b > 0 ? Math.min(b, this.darkBoost) : this.darkBoost;
+      return b;
+    }
+    lights(basePx) {
+      const obj = CAMP_LIGHT_OBJ * H, out = G.players.filter((p) => p.hp > 0).map((p) => [p.x, p.y, basePx]);
+      if (this.core) out.push([this.core.x, this.core.y, (+((this.obj.nucleo || {}).radio_luz) || CAMP_LIGHT_OBJ) * H]);
+      if (this.convoy) out.push([this.convoy.x, this.convoy.y, obj]);
+      for (const a of this.allyTurrets) out.push([a.x, a.y, basePx * 0.5]);
+      for (const w of this.wings) if (w.down <= 0) out.push([w.x, w.y, obj]);
+      for (const r of this.rings) if (!r.done) out.push([r.x, r.y, r.r + 18]);
+      if (this.dest) out.push([this.dest.x, this.dest.y, this.dest.r + 24]);
+      if (this.exit && this.exitOpen) out.push([this.exit.x, this.exit.y, this.exit.r + 24]);
+      return out.slice(0, CAMP_DARK_MAX_LIGHTS);
+    }
+    spawnPatrol(pa) {
+      const route = (pa.ruta || []).map((q) => [q.x * W, q.y * H]), kind = String(pa.enemigo || 'orb');
+      if (!route.length || !ENEMY_HP[kind]) return;
+      const e = G.makeEnemy(this.threat(), kind, route[0][0], route[0][1]);
+      e.vx = 0; e.vy = 0; e.campWave = -1; e.campCore = false;
+      e.campPatrol = { route, i: 1 % route.length, v: +pa.vel_px_s || 45 };
+      G.enemies.push(e);
+    }
+    los(ax, ay, bx, by) {
+      const n = Math.max(1, Math.floor(Math.hypot(bx - ax, by - ay) / 12));
+      for (let k = 1; k < n; k++) if (obstacleHit(ax + (bx - ax) * k / n, ay + (by - ay) * k / n, 0)) return false;
+      return true;
+    }
+    tickSigilo(dt) {
+      const sg = this.sigilo;
+      sg.cd = Math.max(0, sg.cd - dt);
+      if (G.players.some((p) => p.hp > 0 && p.firing)) this.shotT = this.t;
+      const det = (this.t - this.shotT < SIGILO_FIRE_S ? SIGILO_DET_FIRE : SIGILO_DET) * H;
+      for (const e of G.enemies) {
+        if (!e.alive || !e.campPatrol) continue;
+        for (const p of G.players) {
+          if (p.hp > 0 && Math.hypot(p.x - e.x, p.y - e.y) < det + p.r && this.los(e.x, e.y, p.x, p.y)) {
+            e.campPatrol = null; e.campChase = true;
+            if (sg.cd <= 0) this.alarm(e.x, e.y);
+            break;
+          }
+        }
+      }
+    }
+    alarm(x, y) {
+      const sg = this.sigilo, al = (sg && sg.alarma) || {};
+      sg.cd = +al.enfriamiento_s || 6;
+      this.alarmas++;
+      G.showBanner(campTxt('alarma'), RED, 1.6);
+      G.addShake(5);
+      G.particles.ring(x, y, RED, 120, 0.5, 3);
+      this.log.push(`alarma ${this.lid}${this.phases[this.pi].id || ''} t=${this.t.toFixed(1)}`);
+      this.event('alarma', { n: this.alarmas });
+      for (const [kind, n] of Object.entries(al.refuerzos || {})) for (let k = 0; k < (n | 0); k++) {
+        const e = this.spawnEnemy(kind, 'bordes', this.threat());
+        if (e) e.campChase = true;
+      }
+    }
+    tickApagadores(dt) {
+      const ents = [this.core, this.convoy].filter(Boolean).concat(this.allyTurrets);
+      for (const e of G.enemies) {
+        if (!e.alive || e.kind !== 'apagador') continue;
+        let st = e.stick;
+        if (st && (st.hp <= 0 || !ents.includes(st))) e.stick = st = null;
+        if (!st) {
+          for (const x of ents) if (Math.hypot(e.x - x.x, e.y - x.y) < e.r + x.r + 2) { e.stick = x; this.event('apagador_pegado'); break; }
+        } else { st.hp = Math.max(0, st.hp - APAGADOR_DRAIN * dt); st.flash = Math.max(st.flash || 0, 0.05); }
+      }
+    }
+    tickAllies(dt) {
+      for (const a of this.allyTurrets.slice()) {
+        a.flash = Math.max(0, a.flash - dt);
+        for (const e of G.enemies) if (e.alive && e.kind !== 'apagador' && (e.x - a.x) ** 2 + (e.y - a.y) ** 2 < (e.r + a.r) ** 2) { killEnemy(e, false); a.hp -= 1; a.flash = 0.15; }
+        if (G.ebullets.length) G.ebullets = G.ebullets.filter((b) => { if ((b.x - a.x) ** 2 + (b.y - a.y) ** 2 < (b.r + a.r) ** 2) { a.hp -= 1; a.flash = 0.15; return false; } return true; });
+        if (a.hp <= 0.001) {
+          this.allyTurrets.splice(this.allyTurrets.indexOf(a), 1);
+          G.particles.burst(a.x, a.y, LIME, 22, 220, 6);
+          G.showBanner('Torreta aliada destruida', RED, 1.6);
+          this.event('torreta_aliada_caida');
+          continue;
+        }
+        let best = null, bd = ALLY_TUR_RANGE ** 2;
+        for (const e of G.enemies) if (e.alive) { const d = (e.x - a.x) ** 2 + (e.y - a.y) ** 2; if (d < bd) { best = e; bd = d; } }
+        a.cd -= dt;
+        if (best) {
+          a.ang = Math.atan2(best.y - a.y, best.x - a.x);
+          if (a.cd <= 0 && bd > 1) {
+            a.cd = ALLY_TUR_CD;
+            const nx = Math.cos(a.ang), ny = Math.sin(a.ang);
+            G.bullets.push({ id: ++G.nid, x: a.x + nx * (a.r + 4), y: a.y + ny * (a.r + 4), vx: nx * CAMP_ALLY_BULLET_SPEED, vy: ny * CAMP_ALLY_BULLET_SPEED,
+              life: ALLY_TUR_RANGE / CAMP_ALLY_BULLET_SPEED + 0.1, r: 4, dmg: 1, c: LIME, w: 1, owner: -1, ally: true });
+          }
+        }
+      }
+    }
+    tickMapElems(dt) {
+      for (const gt of this.gates) gt.anim = clamp(gt.anim + (gt.open ? dt : -dt) / GATE_ANIM, 0, 1);
+      for (const sw of this.switches) {
+        sw.cd = Math.max(0, sw.cd - dt);
+        const inside = G.players.some((p) => p.hp > 0 && Math.hypot(p.x - sw.x, p.y - sw.y) < sw.r + p.r * 0.5);
+        if (inside && !sw.inside && sw.cd <= 0) { sw.cd = SWITCH_CD; this.toggle(sw); }
+        sw.inside = inside;
+      }
+      for (const lz of this.lasers) {
+        lz.ang += lz.vel * this.laserMult * dt;
+        if (!lz.on || this.complete || this.finishT > 0) continue;
+        const bx = lz.x + Math.cos(lz.ang) * lz.len, by = lz.y + Math.sin(lz.ang) * lz.len;
+        for (const p of G.players) {
+          if (p.hp <= 0 || this.dashT > 0) continue;
+          if (segDist(p.x, p.y, lz.x, lz.y, bx, by) < p.r + MAP_LASER_HALF_W) damagePlayer(p);
+        }
+      }
+    }
+    toggle(sw) {
+      for (const gt of this.gates) {
+        if (sw.abre.includes(gt.grupo) || sw.abre.includes(gt.id)) gt.open = true;
+        else if ((sw.cierra.includes(gt.grupo) || sw.cierra.includes(gt.id)) && gt.open) { gt.open = false; this.expel(gt); }
+      }
+      this.syncGates();
+      G.particles.ring(sw.x, sw.y, sw.col, sw.r * 2.4, 0.4, 3);
+      G.showBanner('Compuertas: ' + this.gates.map((gt) => `${gt.id} ${gt.open ? 'abierta' : 'cerrada'}`).join(' · '), sw.col, 1.4);
+      this.event('interruptor', { id: sw.id });
+    }
+    expel(gt) {
+      const [sx, sy, sw, sh] = gt.sala;
+      const movers = G.players.filter((p) => p.hp > 0).concat(G.enemies.filter((e) => e.alive), this.wings.filter((w) => w.down <= 0));
+      for (const m of movers) {
+        const r = m.r || 14, inRoom = m.x >= sx && m.x <= sx + sw && m.y >= sy && m.y <= sy + sh;
+        const onGate = m.x > gt.x - r && m.x < gt.x + gt.w + r && m.y > gt.y - r && m.y < gt.y + gt.h + r;
+        if (inRoom || onGate) { m.x = clamp(m.x, gt.x + r, gt.x + gt.w - r); m.y = gt.y + gt.h + r + 6; }
+      }
+    }
+    wingCapture(cid, captured) { // ala_capturada: se eyecta y no vuelve hasta ala_rescatada (no cuenta como caída)
+      for (const w of this.wings) {
+        if (w.cid !== cid) continue;
+        if (captured && w.down <= 0) {
+          w.down = 1e9; this.capsules.push([w.x, w.y, rand(-40, 40), -90, 0, w.color]);
+          G.particles.burst(w.x, w.y, w.color, 26, 240, 6);
+          G.showBanner(campTxt('ala_eyectada', { nombre: w.name }), w.color, 2.2);
+        } else if (!captured && w.down > 0) w.down = 0.001;
+      }
+    }
+    newTurret(x, y) { const tc = this.turCfg; return { x, y, r: tc.r, hp: tc.hp, flash: 0, ang: Math.PI / 2, cd: rand(tc.aviso + 0.4, tc.cada) }; }
+    killTurret(tu) {
+      G.particles.burst(tu.x, tu.y, [150, 150, 160], 22, 220, 6);
+      G.particles.ring(tu.x, tu.y, RED, 44, 0.35, 2);
+      G.score += this.turCfg.puntos; G.stats.kills++;
+      G.popup(tu.x, tu.y - 10, `+${this.turCfg.puntos}`, RED);
+      G.addShake(3);
+      this.log.push(`torreta destruida ${this.lid}${this.phases[this.pi].id || ''} t=${this.t.toFixed(1)}`);
+      this.countKill('torreta');
+    }
+    tickTurrets(dt) {
+      const tc = this.turCfg, alive = G.players.filter((q) => q.hp > 0);
+      for (const tu of this.turrets.slice()) {
+        tu.flash = Math.max(0, tu.flash - dt);
+        for (const b of G.bullets) {
+          if (b.life <= 0 || (b.x - tu.x) ** 2 + (b.y - tu.y) ** 2 >= (tu.r + b.r) ** 2) continue;
+          b.life = 0;
+          if (tu.hack) { G.particles.spray(b.x, b.y, -b.vx, -b.vy, CYAN, 2, 0.9, 120, 3, 0.2); continue; } // hay que hackearla
+          if (b.w === 2) rpgExplode(b, b.x, b.y, null);
+          tu.hp -= b.dmg; tu.flash = 0.06;
+          G.particles.spray(b.x, b.y, -b.vx, -b.vy, WHITE, 3, 0.7, 140, 3, 0.2);
+        }
+        if (tu.hp <= 0.001) { this.turrets.splice(this.turrets.indexOf(tu), 1); this.killTurret(tu); continue; }
+        if (this.hold > 0 || this.complete) continue;
+        let tg = null, bd = Infinity;
+        for (const q of alive) { const d = (q.x - tu.x) ** 2 + (q.y - tu.y) ** 2; if (d < bd) { bd = d; tg = q; } }
+        const inRange = tg && Math.sqrt(bd) <= tc.alcance;
+        if (inRange) { tu.ang = Math.atan2(tg.y - tu.y, tg.x - tu.x); tu.cd -= dt; }
+        else if (tu.cd > tc.aviso) tu.cd -= dt;
+        if (tu.cd <= 0 && inRange) {
+          const vx = Math.cos(tu.ang), vy = Math.sin(tu.ang);
+          G.enemyShot(tu.x + vx * (tu.r + 4), tu.y + vy * (tu.r + 4), vx * tc.vel, vy * tc.vel, [255, 51, 85], tc.rb);
+          tu.cd = tc.cada;
+        } else if (tu.cd <= 0) tu.cd = tc.aviso + 0.001;
+      }
+    }
+    pushAt(x, y) {
+      let ox = 0, oy = 0;
+      for (const c of this.currents) {
+        if (c.tipo === 'rect') { if (x >= c.x && x <= c.x + c.w && y >= c.y && y <= c.y + c.h) { ox += c.dx * c.f; oy += c.dy * c.f; } }
+        else {
+          const dx = x - c.x, dy = y - c.y, d2 = dx * dx + dy * dy;
+          if (d2 < c.r * c.r && d2 > 1) { const d = Math.sqrt(d2); ox += -dy / d * c.f; oy += dx / d * c.f; }
+        }
+      }
+      return [ox, oy];
+    }
+    tickCurrents(dt) { // empujan a los jugadores y a los enemigos comunes (no balas, jefes, convoyes ni alas)
+      for (const q of G.players) {
+        if (q.hp <= 0) continue;
+        const [vx, vy] = this.pushAt(q.x, q.y);
+        if (vx || vy) { q.x += vx * dt; q.y += vy * dt; if (MAP.obstacles.length) pushOut(q, q.r); q.x = clamp(q.x, q.r, W - q.r); q.y = clamp(q.y, q.r, H - q.r); }
+      }
+      for (const e of G.enemies) {
+        if (!e.alive) continue;
+        const [vx, vy] = this.pushAt(e.x, e.y);
+        if (vx || vy) { e.x += vx * dt; e.y += vy * dt; if (MAP.obstacles.length) pushOut(e, e.r); }
+      }
+    }
+    tickFront(dt) {
+      const o = this.obj, f = this.front;
+      if (!f) return;
+      const resist = String(o.modo || 'avanzar') === 'resistir';
+      f.flash = Math.max(0, f.flash - dt);
+      if (this.hold <= 0) this.frontAdd((+o.deriva_s || 0) * dt);
+      for (const r of this.rings) {
+        if (r.done || !r.ctl) continue;
+        if (G.players.some((p) => p.hp > 0 && (p.x - r.x) ** 2 + (p.y - r.y) ** 2 < r.r * r.r)) {
+          r.fill = Math.min(1, r.fill + dt / r.charge);
+          if (r.fill >= 1) {
+            r.done = true; this.captured++; this.frontAdd(r.valor);
+            G.particles.ring(r.x, r.y, LIME, r.r * 2, 0.6, 4); G.particles.burst(r.x, r.y, LIME, 20, 180, 5);
+            G.popup(r.x, r.y - r.r - 10, `+${Math.round(r.valor * 100)}%`, LIME, true);
+            this.event('punto_capturado', { n: this.captured });
+          }
+        }
+      }
+      const lim = H - CAMP_FRONT_CROSS_MARGIN;
+      for (const e of G.enemies) {
+        if (e.alive && e.y > lim - e.r && !e.campCore) {
+          e.alive = false;
+          G.particles.burst(e.x, H - 4, [150, 150, 160], 10, 140, 4);
+          if (!this.complete) { this.crosses++; this.frontAdd(o.por_cruce === undefined ? -0.03 : +o.por_cruce); f.flash = 0.4; }
+        }
+      }
+      G.enemies = G.enemies.filter((e) => e.alive);
+      const v = f.v, meta = o.meta === undefined ? 0.75 : +o.meta, der = o.derrota === undefined ? 0.1 : +o.derrota;
+      if (!this.frontLo && v <= der + 0.1) { this.frontLo = true; this.event('frente_bajo'); }
+      else if (this.frontLo && v > der + 0.12) this.frontLo = false;
+      if (!this.frontHi && v >= meta - 0.1) { this.frontHi = true; this.event('frente_alto'); }
+      if (v <= der && !this.complete) campFail(campTxt('fallo_frente'));
+      else if (resist && this.t >= (+o.duracion_s || 60)) this.phaseComplete();
+      else if (!resist && v >= meta) this.phaseComplete();
+    }
+    frontAdd(dv) { if (this.front) this.front.v = clamp(this.front.v + dv, 0, 1); }
+    tickConvoy(dt) {
+      const c = this.convoy;
+      if (!c) return;
+      c.flash = Math.max(0, c.flash - dt);
+      const near = G.enemies.some((e) => e.alive && Math.hypot(e.x - c.x, e.y - c.y) < c.frena);
+      c.stopped = near;
+      if (near && !this.convoyStopped) { this.convoyStopped = true; this.event('convoy_frenado'); }
+      if (!near && this.hold <= 0 && c.seg < c.route.length) {
+        const [tx, ty] = c.route[c.seg], dx = tx - c.x, dy = ty - c.y, d = Math.hypot(dx, dy), step = c.speed * dt;
+        if (d <= step) { c.x = tx; c.y = ty; c.done += d; c.seg++; }
+        else { c.dir = [dx / d, dy / d]; c.x += c.dir[0] * step; c.y += c.dir[1] * step; c.done += step; }
+      }
+      let hit = 0;
+      for (const e of G.enemies) if (e.alive && e.kind !== 'apagador' && (e.x - c.x) ** 2 + (e.y - c.y) ** 2 < (e.r + c.r) ** 2) { hit++; killEnemy(e, false); }
+      if (G.ebullets.length && (G.boss || this.turrets.length)) G.ebullets = G.ebullets.filter((b) => { if ((b.x - c.x) ** 2 + (b.y - c.y) ** 2 < (b.r + c.r) ** 2) { hit++; return false; } return true; });
+      if (hit) { c.hp = Math.max(0, c.hp - hit); c.flash = 0.15; G.addShake(4); G.particles.ring(c.x, c.y, RED, c.r * 2.2, 0.35, 3); }
+      if (!this.convoyLow && c.hp < c.max * 0.35) { this.convoyLow = true; this.event('convoy_bajo'); }
+      if (c.hp <= 0) campFail(campTxt('fallo_convoy', { nombre: c.nombre }));
+      else if (c.seg >= c.route.length) this.phaseComplete();
+    }
+    tickEscape() {
+      const x = this.exit;
+      if (!x) return;
+      if (!this.exitOpen && this.t >= x.wait) { this.exitOpen = true; this.event('salida_abierta'); }
+      if (!this.exitOpen) return;
+      const need = G.players.filter((q) => !q.out), inside = need.filter((q) => q.hp > 0 && (q.x - x.x) ** 2 + (q.y - x.y) ** 2 < x.r * x.r);
+      if (inside.length && !this.exitAny) { this.exitAny = true; this.event('salida_alguien'); }
+      if (need.length && inside.length === need.length) { this.escapeTime = this.t; G.particles.ring(x.x, x.y, LIME, x.r * 2.4, 0.6, 4); this.phaseComplete(); }
     }
     resetPhaseVars() {
       this.obj = this.phases[this.pi].objetivo || { tipo: 'sobrevivir', duracion_s: 60 };
@@ -3503,11 +4334,16 @@
       this.dir = this.phases[this.pi].director || null; this.dirTimer = 0; this.puTimer = this.puEvery;
       this.rings = []; this.core = null; this.coreLow = false;
       this.olI = -1; this.olT = 0; this.olPause = 0; this.olPassed = 0; this.bossStarted = false;
+      this.convoy = null; this.convoyLow = false; this.convoyStopped = false; this.front = null; this.frontLo = false; this.frontHi = false;
+      this.turrets = []; this.exit = null; this.exitOpen = false; this.exitAny = false; this.captured = 0; this.crosses = 0;
+      this.dest = null; this.sigilo = null; this.shotT = -99; this.laserMult = 1;
+      this.darkBoost = 0; this.darkBoostT = 0; this.darkWarn = 0;
     }
     startPhase(i) {
       this.pi = i;
       this.resetPhaseVars();
-      const o = this.obj, ph = this.phases[i];
+      const o = this.obj, ph = this.phases[i], pid = String(ph.id || '');
+      for (const e of G.enemies) if (e.campShield === pid) e.campShield = ''; // invulnerable_hasta_fase: se termina al empezar esa fase
       if (ph.limpiar_enemigos_al_entrar || o.limpiar_enemigos_al_entrar) {
         for (const e of G.enemies) if (e.alive) { e.alive = false; G.particles.burst(e.x, e.y, WHITE, 14, 200, 4); }
         G.enemies = []; G.ebullets.length = 0;
@@ -3519,11 +4355,52 @@
         const n = o.nucleo || {}, hp = +n.vida || 20;
         this.core = { x: (n.x ?? 0.5) * W, y: (n.y ?? 0.4) * H, r: (+n.r || 0.045) * MIN_WH, hp, max: hp, nombre: n.nombre || 'Núcleo', flash: 0 };
       } else if (this.otype === 'eliminar') {
-        for (const pt of o.colocar || []) if (ENEMY_HP[o.enemigo]) { const e = G.makeEnemy(this.threat(), o.enemigo, pt.x * W, pt.y * H); e.vx *= 0.3; e.vy *= 0.3; G.enemies.push(e); }
+        for (const pt of o.colocar || []) {
+          if (ENEMY_HP[o.enemigo]) { const e = G.makeEnemy(this.threat(), o.enemigo, pt.x * W, pt.y * H); e.vx *= 0.3; e.vy *= 0.3; G.enemies.push(e); }
+          else if (o.enemigo === 'torreta') this.turrets.push(this.newTurret(pt.x * W, pt.y * H)); // entidad de la campaña (no va por red)
+        }
       } else if (this.otype === 'jefe') {
         campStartBoss(o, this.bossVariant());
         this.bossStarted = true;
+      } else if (this.otype === 'frente') {
+        this.front = { v: o.inicio === undefined ? 0.5 : +o.inicio, flash: 0 };
+        for (const pt of o.puntos_control || []) this.rings.push({ x: pt.x * W, y: pt.y * H, r: (+pt.r || 0.06) * MIN_WH, fill: 0, done: false,
+          valor: pt.valor === undefined ? 0.05 : +pt.valor, charge: Math.max(0.5, +pt.tiempo_s || 4), ctl: true });
+      } else if (this.otype === 'escoltar') {
+        const cv = o.convoy || {};
+        let route = (o.ruta || []).map((q) => [q.x * W, q.y * H]);
+        if (route.length < 2) route = [[0.03 * W, 0.4 * H], [0.97 * W, 0.5 * H]];
+        const hp = +cv.vida || 15;
+        let total = 0;
+        for (let k = 0; k + 1 < route.length; k++) total += Math.hypot(route[k + 1][0] - route[k][0], route[k + 1][1] - route[k][1]);
+        this.convoy = { x: route[0][0], y: route[0][1], r: (+cv.r || 0.031) * MIN_WH, hp, max: hp, nombre: String(cv.nombre || 'Convoy'), flash: 0,
+          route, seg: 1, speed: +cv.velocidad_px_s || 9, dir: norm(route[1][0] - route[0][0], route[1][1] - route[0][1]), total, done: 0, stopped: false,
+          frena: (o.frena_si_enemigo_a === undefined ? 0.19 : +o.frena_si_enemigo_a) * 640 };
+      } else if (this.otype === 'escapar') {
+        const sa = o.salida || {};
+        this.exit = { x: (sa.x === undefined ? 0.5 : +sa.x) * W, y: (sa.y === undefined ? 0.08 : +sa.y) * H, r: (+sa.r || 0.05) * MIN_WH, wait: +o.abre_a_s || 0 };
+      } else if (this.otype === 'infiltrar') {
+        const de = o.destino || {};
+        this.dest = { x: (de.x === undefined ? 0.5 : +de.x) * W, y: (de.y === undefined ? 0.1 : +de.y) * H, r: (+de.r || 0.05) * MIN_WH };
+        this.dest.d0 = Math.max(1, Math.hypot(this.dest.x - G.player.x, this.dest.y - G.player.y));
+      } else if (this.otype === 'hackear') {
+        const rad = (+o.radio || 0.07) * MIN_WH;
+        for (const pt of o.torretas || []) {
+          const tu = this.newTurret(pt.x * W, pt.y * H);
+          tu.hack = true; this.turrets.push(tu);
+          this.rings.push({ x: tu.x, y: tu.y, r: rad, fill: 0, done: false, hack: tu });
+        }
       }
+      const sig = this.otype === 'infiltrar' ? o : ph.sigilo;
+      if (sig && typeof sig === 'object' && (sig.patrullas || []).length) {
+        this.sigilo = { alarma: Object.assign({}, sig.alarma || {}), cd: 0 };
+        for (const pa of sig.patrullas) this.spawnPatrol(pa);
+      }
+      if (this.escudo) for (const p of G.players) { // Escudo Prisma: 1 golpe, recarga 10 s (mejora escudo_recarga)
+        p.shieldS = p.shieldS > 0 ? Math.min(p.shieldS, this.escRec) : this.escRec;
+        if (p.shieldCd <= 0) p.shield = true;
+      }
+      this.syncGates();
       G.showBanner(this.hudLabel(), PINK, 2.4);
       this.event('inicio');
       if (this.otype === 'jefe') this.event('jefe_inicio');
@@ -3534,7 +4411,23 @@
       if (tp === 'sobrevivir' || tp === 'proteger') return clamp(this.t / Math.max(1, +o.duracion_s || 60), 0, 1);
       if (tp === 'eliminar') return clamp(this.kills / Math.max(1, o.cantidad | 0), 0, 1);
       if (tp === 'oleadas') return clamp(this.olPassed / Math.max(1, (o.lista || []).length), 0, 1);
-      if (tp === 'terminales') return clamp(this.rings.reduce((a, r) => a + r.fill, 0) / Math.max(1, this.rings.length), 0, 1);
+      if (tp === 'terminales' || tp === 'hackear') return clamp(this.rings.reduce((a, r) => a + r.fill, 0) / Math.max(1, this.rings.length), 0, 1);
+      if (tp === 'infiltrar') {
+        if (!this.dest) return this.complete ? 1 : 0;
+        const al = G.players.filter((q) => q.hp > 0), near = al.length ? Math.min(...al.map((q) => Math.hypot(q.x - this.dest.x, q.y - this.dest.y))) : this.dest.d0;
+        return clamp(1 - near / this.dest.d0, 0, 1);
+      }
+      if (tp === 'frente') {
+        if (String(o.modo || 'avanzar') === 'resistir') return clamp(this.t / Math.max(1, +o.duracion_s || 60), 0, 1);
+        const a = o.inicio === undefined ? 0.5 : +o.inicio, b = o.meta === undefined ? 0.75 : +o.meta, v = this.front ? this.front.v : b;
+        return clamp((v - a) / Math.max(0.01, b - a), 0, 1);
+      }
+      if (tp === 'escoltar') return this.convoy ? clamp(this.convoy.done / Math.max(1, this.convoy.total), 0, 1) : (this.complete ? 1 : 0);
+      if (tp === 'escapar') {
+        const al = G.players.filter((q) => q.hp > 0);
+        if (!this.exit || !al.length) return 0;
+        return clamp(1 - Math.max(...al.map((q) => Math.hypot(q.x - this.exit.x, q.y - this.exit.y))) / H, 0, 1);
+      }
       if (tp === 'jefe') return G.boss ? clamp(1 - G.boss.hp / Math.max(1, G.boss.maxHp), 0, 1) : (this.complete ? 1 : 0);
       return clamp(this.t / 60, 0, 1);
     }
@@ -3548,9 +4441,12 @@
       } else if (tp === 'eliminar') {
         const total = o.cantidad | 0 || 1;
         v.n = Math.max(0, total - this.kills); v.i = Math.min(this.kills, total);
-        if (ENEMY_HP[o.enemigo]) { key = 'obj_eliminar_tipo'; v.tipo = CAMP_KIND_PLURAL[o.enemigo] || o.enemigo; }
+        if (ENEMY_HP[o.enemigo] || o.enemigo === 'torreta') { key = 'obj_eliminar_tipo'; v.tipo = CAMP_KIND_PLURAL[o.enemigo] || o.enemigo; }
       } else if (tp === 'oleadas') { v.n = (o.lista || []).length; v.i = Math.min(v.n, Math.max(1, this.olI + 1)); }
-      else if (tp === 'terminales') { v.n = this.rings.length; v.i = this.rings.filter((r) => r.done).length; }
+      else if (tp === 'terminales' || tp === 'hackear') { v.n = this.rings.length; v.i = this.rings.filter((r) => r.done).length; }
+      else if (tp === 'escoltar') v.nombre = (this.convoy || {}).nombre || this.convoyNombre;
+      else if (tp === 'escapar') { const wt = ((this.exit || {}).wait || 0) - this.t; if (wt > 0) { key = 'obj_escapar_espera'; v.s = Math.ceil(wt); } }
+      else if (tp === 'frente' && String(o.modo || 'avanzar') === 'resistir') { key = 'obj_frente_resistir'; v.s = Math.ceil(Math.max(0, (+o.duracion_s || 60) - this.t)); }
       else if (tp === 'jefe') v.jefe = G.boss ? G.boss.name : (this.bossVariant().nombre_mostrado || 'JEFE');
       const tpl = String(o.etiqueta_hud || campTxt(key));
       return tpl.replace(/\{(\w+)\}/g, (m, k) => (k in v ? String(v[k]) : m)) + suffix;
@@ -3562,11 +4458,15 @@
       this.fired.add(idx);
       const it = this.lines()[idx];
       if ('texto' in it) { this.radioPush(String(it.quien || 'flota'), String(it.texto)); this.log.push(`radio ${this.lid} t=${this.t.toFixed(1)} ${it.quien}`); }
+      else if (it.accion === 'laseres_vel') this.laserMult = +it.mult || 1; // v5.2
+      else if (it.accion === 'ala_capturada' || it.accion === 'ala_rescatada') this.wingCapture(String(it.ala || ''), it.accion === 'ala_capturada');
       else if (it.accion === 'spawn') {
-        const pts = (it.en || []).slice();
+        const pts = (it.en || []).slice(), shield = String(it.invulnerable_hasta_fase || '');
         for (const [kind, n] of Object.entries(it.enemigos || {})) for (let k = 0; k < (n | 0); k++) {
           const pt = pts.shift();
-          if (ENEMY_HP[kind]) this.spawnEnemy(kind, 'bordes', this.threat(), pt ? [pt.x * W, pt.y * H] : null);
+          if (!ENEMY_HP[kind]) continue;
+          const e = this.spawnEnemy(kind, 'bordes', this.threat(), pt ? [pt.x * W, pt.y * H] : null);
+          if (e && shield) e.campShield = shield; // no recibe daño hasta que empiece esa fase
         }
       }
     }
@@ -3606,12 +4506,15 @@
     }
     spawnEnemy(kind, desde, w, pos, tag = -1) {
       if (G.enemies.length >= CAMP_ENEMY_CAP) return null;
+      if (!ENEMY_HP[kind]) return null;
       if (!pos && desde === 'arriba') pos = [rand(40, W - 40), -20];
+      else if (!pos && desde === 'mapa' && (this.mapDef.aparicion_enemigos || []).length) { const c = choice(this.mapDef.aparicion_enemigos); pos = [c.x * W, c.y * H]; }
       const e = G.makeEnemy(w, kind, pos ? pos[0] : undefined, pos ? pos[1] : undefined);
       e.campWave = tag; e.campCore = false;
-      if (this.core && Math.random() < (this.obj.fraccion_al_nucleo ?? 0.5)) {
+      const ent = this.core || this.convoy; // el núcleo o el convoy (escoltar)
+      if (ent && Math.random() < (this.obj.fraccion_al_nucleo ?? 0.5)) {
         e.campCore = true;
-        const dx = this.core.x - e.x, dy = this.core.y - e.y, sp = Math.hypot(e.vx, e.vy), a = Math.atan2(dy, dx) + rand(-0.21, 0.21);
+        const dx = ent.x - e.x, dy = ent.y - e.y, sp = Math.hypot(e.vx, e.vy), a = Math.atan2(dy, dx) + rand(-0.21, 0.21);
         e.vx = Math.cos(a) * sp; e.vy = Math.sin(a) * sp;
       }
       G.enemies.push(e);
@@ -3619,8 +4522,27 @@
       return e;
     }
     enemyTarget(e) { // los enemigos «al núcleo» van al núcleo (orbes y spinners se corrigen de a poco)
-      if (!this.core || !e.campCore) return null;
-      const c = this.core;
+      const pa = e.campPatrol;
+      if (pa) { // v5.2: patrulla de sigilo (ida y vuelta por la ruta)
+        let [tx, ty] = pa.route[pa.i];
+        if (Math.hypot(tx - e.x, ty - e.y) < 6) { pa.i = (pa.i + 1) % pa.route.length; [tx, ty] = pa.route[pa.i]; }
+        const d = Math.hypot(tx - e.x, ty - e.y);
+        if (d > 1) { e.vx = (tx - e.x) / d * pa.v; e.vy = (ty - e.y) / d * pa.v; } else { e.vx = 0; e.vy = 0; }
+        return { x: tx, y: ty };
+      }
+      if (e.kind === 'apagador') { // la luz más cercana (núcleo, convoy, torreta aliada, ala); si no, el jugador
+        if (e.stick) { e.vx = 0; e.vy = 0; return { x: e.x, y: e.y }; }
+        const c = [this.core, this.convoy].filter(Boolean).concat(this.allyTurrets, this.wings.filter((w) => w.down <= 0));
+        let best = null, bd = Infinity;
+        for (const q of c) { const d = (q.x - e.x) ** 2 + (q.y - e.y) ** 2; if (d < bd) { bd = d; best = q; } }
+        return best ? { x: best.x, y: best.y } : null;
+      }
+      if (e.campChase && (e.kind === 'orb' || e.kind === 'spinner')) {
+        const q = nearestAlive(e.x, e.y);
+        if (q) { const [nx, ny] = norm(q.x - e.x, q.y - e.y), sp = Math.max(90, Math.hypot(e.vx, e.vy)); e.vx += (nx * sp - e.vx) * 0.05; e.vy += (ny * sp - e.vy) * 0.05; }
+      }
+      const c = this.core || this.convoy;
+      if (!c || !e.campCore) return null;
       if (e.kind !== 'hunter') {
         const dx = c.x - e.x, dy = c.y - e.y, d = Math.hypot(dx, dy), sp = Math.hypot(e.vx, e.vy);
         if (d > 1 && sp > 1) { e.vx += (dx / d * sp - e.vx) * 0.02; e.vy += (dy / d * sp - e.vy) * 0.02; }
@@ -3641,10 +4563,12 @@
         this.spawnEnemy(campWeighted(d.mezcla || { orb: 1 }, KINDS), d.desde || 'bordes', this.threat());
       }
     }
-    onKill(e) {
-      this.killsType[e.kind] = (this.killsType[e.kind] || 0) + 1;
-      this.event('enemigo_eliminado', { tipo: e.kind, n: this.killsType[e.kind] });
-      if (this.otype === 'eliminar' && (!this.obj.enemigo || this.obj.enemigo === e.kind)) this.kills++;
+    onKill(e) { this.countKill(e.kind); }
+    countKill(kind) {
+      this.killsType[kind] = (this.killsType[kind] || 0) + 1;
+      this.event('enemigo_eliminado', { tipo: kind, n: this.killsType[kind] });
+      if (this.otype === 'eliminar' && (!this.obj.enemigo || this.obj.enemigo === kind)) this.kills++;
+      if (this.front && !this.complete) this.frontAdd(this.obj.por_baja === undefined ? 0.007 : +this.obj.por_baja); // cada baja empuja el frente
     }
     onLifeLost() { this.livesLost++; this.event('vida_perdida'); }
     onAbility(boss, k) {
@@ -3699,6 +4623,7 @@
       G.particles.burst(w.x, w.y, w.color, 10, 160, 4);
       if (w.hp <= 0) {
         w.down = w.respawnS; this.wingsDown++;
+        if (this.front && !this.complete) this.frontAdd(this.obj.por_ala_caida === undefined ? -0.02 : +this.obj.por_ala_caida);
         this.capsules.push([w.x, w.y, rand(-40, 40), -90, 0, w.color]);
         G.particles.burst(w.x, w.y, w.color, 26, 240, 6); G.particles.ring(w.x, w.y, w.color, 60, 0.4, 3);
         G.showBanner(campTxt('ala_eyectada', { nombre: w.name }), w.color, 2.2);
@@ -3808,7 +4733,40 @@
       } else if (tp === 'proteger') { this.tickCore(dt); if (this.core && this.t >= (+o.duracion_s || 60)) this.phaseComplete(); }
       else if (tp === 'oleadas') this.tickWaves(dt);
       else if (tp === 'jefe') { if (!this.bossStarted) { campStartBoss(o, this.bossVariant()); this.bossStarted = true; } }
+      else if (tp === 'frente') this.tickFront(dt);
+      else if (tp === 'escoltar') this.tickConvoy(dt);
+      else if (tp === 'escapar') this.tickEscape(dt);
+      else if (tp === 'infiltrar') {
+        const d = this.dest;
+        if (d && G.players.some((q) => q.hp > 0 && Math.hypot(q.x - d.x, q.y - d.y) < d.r)) { G.particles.ring(d.x, d.y, LIME, d.r * 2.4, 0.6, 4); this.phaseComplete(); }
+      } else if (tp === 'hackear') {
+        const charge = Math.max(0.5, +o.tiempo_carga_s || 3.5);
+        for (const r of this.rings) {
+          if (r.done || !G.players.some((q) => q.hp > 0 && (q.x - r.x) ** 2 + (q.y - r.y) ** 2 < r.r * r.r)) continue;
+          r.fill = Math.min(1, r.fill + dt / charge);
+          if (r.fill >= 1) {
+            r.done = true;
+            const tu = r.hack, k = this.turrets.indexOf(tu);
+            if (k >= 0) this.turrets.splice(k, 1);
+            this.allyTurrets.push(this.newAlly(tu.x, tu.y));
+            const n = this.rings.filter((q) => q.done).length;
+            G.particles.ring(r.x, r.y, [60, 255, 176], r.r * 2, 0.6, 4);
+            G.popup(r.x, r.y - r.r - 10, `${n}/${this.rings.length}`, [60, 255, 176], true);
+            this.event('torreta_hackeada', { n });
+          }
+        }
+        if (this.rings.length && this.rings.every((r) => r.done)) this.phaseComplete();
+      }
       else if (this.t >= (+o.duracion_s || 60)) this.phaseComplete();
+      if (this.turrets.length) this.tickTurrets(dt);
+      if (this.allyTurrets.length) this.tickAllies(dt);
+      this.tickApagadores(dt);
+      if (this.sigilo) this.tickSigilo(dt);
+      if (this.gates.length || this.switches.length || this.lasers.length) this.tickMapElems(dt);
+      this.darkBoostT = Math.max(0, this.darkBoostT - dt);
+      this.darkWarn = Math.max(0, this.darkWarn - dt);
+      if (this.currents.length) this.tickCurrents(dt);
+      if (this.battle) this.battle.t += dt;
       this.director(dt);
       this.checkTimeTriggers();
     }
@@ -3817,7 +4775,7 @@
       if (!c || G.state !== 'play') return;
       c.flash = Math.max(0, c.flash - dt);
       let hit = 0;
-      for (const e of G.enemies) if (e.alive && (e.x - c.x) ** 2 + (e.y - c.y) ** 2 < (e.r + c.r) ** 2) { hit++; killEnemy(e, false); }
+      for (const e of G.enemies) if (e.alive && e.kind !== 'apagador' && (e.x - c.x) ** 2 + (e.y - c.y) ** 2 < (e.r + c.r) ** 2) { hit++; killEnemy(e, false); }
       if (G.boss && G.ebullets.length) G.ebullets = G.ebullets.filter((b) => { if ((b.x - c.x) ** 2 + (b.y - c.y) ** 2 < (b.r + c.r) ** 2) { hit++; return false; } return true; });
       if (hit) { c.hp = Math.max(0, c.hp - hit); c.flash = 0.15; G.addShake(4); G.particles.ring(c.x, c.y, RED, c.r * 2.2, 0.35, 3); }
       if (!this.coreLow && c.hp < c.max * 0.35) { this.coreLow = true; this.event('nucleo_bajo'); }
@@ -3853,6 +4811,9 @@
       if (this.complete) return;
       this.complete = true;
       if (this.core) this.coreFrac = this.core.hp / Math.max(1, this.core.max);
+      if (this.convoy) { this.convoyFrac = this.convoy.hp / Math.max(1, this.convoy.max); this.log.push(`convoy ${this.lid} vida=${Math.round(this.convoy.hp)}/${this.convoy.max}`); }
+      if (this.front) { this.frontFinal = this.front.v; this.log.push(`frente ${this.lid} final=${this.front.v.toFixed(3)} cruces=${this.crosses} puntos=${this.captured}`); }
+      if (this.exit) this.log.push(`salida ${this.lid} t=${this.escapeTime}`);
       this.timeDone += this.t;
       for (const e of G.enemies) e.campCore = false;
       this.log.push(`fase ${this.lid}${this.phases[this.pi].id || ''} completa t=${this.t.toFixed(1)}`);
@@ -3872,8 +4833,9 @@
       }
     }
     stats() {
-      const st = { tiempo_s: Math.round(this.timeDone * 100) / 100, vidas_perdidas: this.livesLost, alas_caidas: this.wingsDown, luces_extra: this.lucesExtra };
+      const st = { tiempo_s: Math.round(this.timeDone * 100) / 100, vidas_perdidas: this.livesLost, alas_caidas: this.wingsDown, luces_extra: this.lucesExtra, alarmas: this.alarmas };
       if (this.coreFrac !== null) st.nucleo_frac = Math.round(this.coreFrac * 1000) / 1000;
+      if (this.convoyFrac !== null) st.convoy_frac = Math.round(this.convoyFrac * 1000) / 1000;
       return st;
     }
   }
@@ -3882,7 +4844,11 @@
     const Cls = CAMP_BOSSES[o.jefe] || Warden, b = new Cls();
     b.index = 0;
     b.maxHp = b.baseHp = b.hp = +v.vida_base || b.maxHp;
+    b.phase2Frac = clamp(+v.fase2_desde || 0.5, 0.05, 0.95);
     if (v.nombre_mostrado) b.name = v.nombre_mostrado;
+    const letters = { warden: { anillo: 'a', minas: 'b' }, seeker: { teletransporte: 'a', misiles: 'b' } }[o.jefe] || {};
+    const hab = [...new Set((v.habilidades || []).filter((h) => letters[h]).map((h) => letters[h]))];
+    if (hab.length === 1) b.abilOnly = hab[0]; // la variante lista una sola habilidad
     G.boss = b; G.mines = []; G.missiles = [];
     for (const p of G.players) p.bossHit = false;
     G.stats.bossesSeen.push(b.name);
@@ -4007,13 +4973,14 @@
     if (!cr) return;
     cr.attempts++;
     if (cr.pi > 0) cr.bonusVoid = true; // desde un checkpoint se pierden los bonus de corrida completa
-    else { cr.timeDone = 0; cr.livesLost = 0; cr.wingsDown = 0; cr.lucesExtra = cr.lucesStart; cr.coreFrac = null; cr.bossTime = null; }
+    else { cr.timeDone = 0; cr.livesLost = 0; cr.wingsDown = 0; cr.lucesExtra = cr.lucesStart; cr.coreFrac = null; cr.bossTime = null; cr.convoyFrac = null; }
     const keepW = G.myWeapon;
     initRound([{ id: 0, name: G.name, lo: campLoadout() }]);
     G.myWeapon = G.player.weapon = cr.weapons.includes(keepW) ? keepW : 0;
     cr.radio.cur = null; cr.radio.queue = [];
     cr.dashCd = cr.dashT = 0; cr.capsules = []; cr.ghosts = [];
     cr.setupWings();
+    cr.v52Reset(cr.pi === 0);
     cr.startPhase(cr.pi);
     setState('play');
   }
@@ -4041,7 +5008,12 @@
       else if (tipo === 'jefe_tiempo_max_s') ok = cr.bossTime !== null && cr.bossTime <= +val;
       else if (tipo === 'nucleo_mas_de') ok = cr.coreFrac !== null && cr.coreFrac >= +val;
       else if (tipo === 'alas_sin_caer') ok = cr.wingsDown === 0;
-      const desc = campTxt(`bonus.${tipo}`, { valor: val, pct: typeof val === 'number' ? Math.round(val * 100) : 0, nombre: cr.nucleoNombre });
+      else if (tipo === 'frente_final_mayor') ok = cr.frontFinal !== null && cr.frontFinal >= +val - 1e-9;
+      else if (tipo === 'convoy_mas_de') ok = cr.convoyFrac !== null && cr.convoyFrac >= +val;
+      else if (tipo === 'tiempo_salida_max_s') ok = cr.escapeTime !== null && cr.escapeTime <= +val;
+      else if (tipo === 'sin_alarmas') ok = cr.alarmas === 0; // v5.2
+      else if (tipo === 'torretas_vivas') ok = cr.allyTurrets.length >= (val | 0);
+      const desc = campTxt(`bonus.${tipo}`, { valor: val, pct: typeof val === 'number' ? Math.round(val * 100) : 0, nombre: cr.bonusName(tipo) });
       const gain = ok && !had.has(tipo) ? b.luces | 0 : 0;
       lucesBonus += gain;
       rows.push({ desc, ok, gain, had: had.has(tipo) });
@@ -4049,6 +5021,11 @@
     }
     const unlocks = [], des = lv.desbloquea || {};
     for (const a of des.armas || []) if (HG.WEAPON_IDS.includes(a) && !slot.armas.includes(a)) { slot.armas.push(a); unlocks.push([campTxt('arma_nueva', { arma: HG.WEAPON_NAMES[HG.WEAPON_IDS.indexOf(a)] }), ORANGE]); }
+    for (const [wid, nl] of Object.entries(HG.ARMAS_NUEVAS_NIVEL)) if (nl === lid && !slot.armas.includes(wid)) { // v5.2: esquirla 4-3, arco 6-1, ...
+      slot.armas.push(wid);
+      const wi = HG.WEAPON_IDS.indexOf(wid);
+      unlocks.push([campTxt('arma_nueva', { arma: HG.WEAPON_NAMES[wi] }), WEAPON_COLORS[wi] || ORANGE]);
+    }
     for (const m of des.mecanicas || []) if (!slot.mecanicas.includes(m)) { slot.mecanicas.push(m); unlocks.push([campTxt('mecanica_nueva', { nombre: ((CD.mecanicas[m] || {}).nombre || m).split(' (')[0] }), YELLOW]); }
     const regIds = (CD.registros || []).map((r) => r.id);
     let newRegs = false;
@@ -4261,12 +5238,114 @@
   }, 250);
 
   // ---- dibujo en juego ----
+  function campBar(x, y, r, frac) { // barra de vida: 2,2·r × 6 px arriba de la entidad (peligro si ≤ 30 %)
+    const bw = 2.2 * r, bx = x - bw / 2, by = y - r - 20;
+    ctx.fillStyle = 'rgb(25,20,40)'; ctx.fillRect(bx, by, bw, 6);
+    if (frac > 0) { ctx.fillStyle = rgb(frac <= 0.3 ? RED : LIME); ctx.fillRect(bx, by, Math.max(1, bw * frac), 6); }
+    ctx.strokeStyle = rgb(WHITE, 0.6); ctx.lineWidth = 1; ctx.strokeRect(bx - 1, by - 1, bw + 2, 8);
+  }
+  function campDrawTurret(tu, col, warn) {
+    const fl = tu.flash > 0;
+    ctx.fillStyle = rgb(fl ? WHITE : col, 0.35); circle(tu.x, tu.y, tu.r); ctx.fill();
+    ctx.strokeStyle = rgb(warn ? RED : col); ctx.lineWidth = warn ? 3 : 2; ctx.stroke();
+    ctx.strokeStyle = rgb(WHITE); ctx.lineWidth = 4; ctx.beginPath(); ctx.moveTo(tu.x, tu.y);
+    ctx.lineTo(tu.x + Math.cos(tu.ang) * (tu.r + 8), tu.y + Math.sin(tu.ang) * (tu.r + 8)); ctx.stroke();
+  }
   function campDrawUnder() {
     const cr = G.camp;
     if (!cr) return;
     const t = bg.pulse || 0;
+    if (cr.battle) { // fondo de batalla (solo decorado): trazadoras lejanas
+      const n = 4 + cr.battle.i * 3;
+      ctx.lineWidth = 1;
+      for (let k = 0; k < n; k++) {
+        const ph = (cr.battle.t * (0.3 + (k % 5) * 0.07) + k * 0.37) % 1, y = H * (0.08 + ((k * 0.618) % 1) * 0.55);
+        const x = (k % 2 ? ph : 1 - ph) * W;
+        ctx.strokeStyle = rgb(k % 3 ? [255, 80, 120] : [120, 220, 255], 0.18);
+        ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(x + (k % 2 ? -40 : 40), y + 6); ctx.stroke();
+      }
+    }
+    for (const c of cr.currents) { // corrientes: chevrones que avanzan
+      ctx.strokeStyle = rgb([200, 240, 255], 0.25); ctx.lineWidth = 2;
+      if (c.tipo === 'rect') {
+        const along = Math.abs(c.dx) * c.w + Math.abs(c.dy) * c.h, across = Math.abs(c.dy) * c.w + Math.abs(c.dx) * c.h;
+        const nx = -c.dy, ny = c.dx, cx = c.x + c.w / 2, cy = c.y + c.h / 2, ph = (t * c.f * 0.5) % 40;
+        ctx.beginPath();
+        for (let s0 = -along / 2 + ph - 40; s0 < along / 2 + 40; s0 += 40) for (let a0 = -across / 2 + 14; a0 < across / 2; a0 += 28) {
+          const qx = cx + c.dx * s0 + nx * a0, qy = cy + c.dy * s0 + ny * a0;
+          if (qx < c.x || qx > c.x + c.w || qy < c.y || qy > c.y + c.h) continue;
+          ctx.moveTo(qx - c.dx * 7 + nx * 7, qy - c.dy * 7 + ny * 7); ctx.lineTo(qx + c.dx * 7, qy + c.dy * 7); ctx.lineTo(qx - c.dx * 7 - nx * 7, qy - c.dy * 7 - ny * 7);
+        }
+        ctx.stroke();
+      } else {
+        const sg = c.f > 0 ? 1 : -1, a0 = t * sg * Math.min(2, Math.abs(c.f) / Math.max(1, c.r));
+        ctx.beginPath();
+        for (let k = 0; k < 8; k++) {
+          const a = a0 + k * TAU / 8, qx = c.x + Math.cos(a) * c.r * 0.7, qy = c.y + Math.sin(a) * c.r * 0.7, dx = -Math.sin(a) * sg, dy = Math.cos(a) * sg, nx = -dy, ny = dx;
+          ctx.moveTo(qx - dx * 7 + nx * 7, qy - dy * 7 + ny * 7); ctx.lineTo(qx + dx * 7, qy + dy * 7); ctx.lineTo(qx - dx * 7 - nx * 7, qy - dy * 7 - ny * 7);
+        }
+        ctx.stroke();
+      }
+    }
+    if (cr.front) { // línea de luz del frente: y = (1 - frente)·H
+      const fy = (1 - cr.front.v) * H;
+      ctx.strokeStyle = rgb(WHITE, 0.5); ctx.lineWidth = 2; ctx.beginPath(); ctx.moveTo(0, fy); ctx.lineTo(W, fy); ctx.stroke();
+      ctx.strokeStyle = rgb(RED, 0.5); ctx.lineWidth = 1; ctx.beginPath(); ctx.moveTo(0, fy - 2); ctx.lineTo(W, fy - 2); ctx.stroke();
+      ctx.strokeStyle = rgb(LIME, 0.5); ctx.beginPath(); ctx.moveTo(0, fy + 2); ctx.lineTo(W, fy + 2); ctx.stroke();
+      if (cr.front.flash > 0) { ctx.fillStyle = rgb(RED, 0.25 * cr.front.flash / 0.4); ctx.fillRect(0, H - 10, W, 10); }
+    }
+    const x = cr.exit;
+    if (x) { // salida: apagada hasta que abre
+      const col = cr.exitOpen ? LIME : DIM;
+      if (cr.exitOpen) additive(() => glow(x.x, x.y, x.r * 2.2, col, 0.6));
+      ctx.fillStyle = rgb(col, 0.25); circle(x.x, x.y, x.r); ctx.fill();
+      ctx.strokeStyle = rgb(col); ctx.lineWidth = 2; ctx.stroke();
+      if (cr.exitOpen) for (let k = 0; k < 8; k++) { const a = t * 1.4 + k * TAU / 8; ctx.fillStyle = rgb(col); circle(x.x + Math.cos(a) * x.r * 0.6, x.y + Math.sin(a) * x.r * 0.6, 2); ctx.fill(); }
+    }
+    for (const gt of cr.gates) { // compuertas: se abren desde el centro
+      const k = gt.anim;
+      if (k < 1) {
+        const vx = gt.x + gt.w * k / 2, vw = Math.max(1, gt.w * (1 - k));
+        ctx.fillStyle = rgb(gt.col, 0.25); ctx.fillRect(vx, gt.y, vw, gt.h);
+        ctx.strokeStyle = rgb(gt.col); ctx.lineWidth = 3; ctx.strokeRect(vx, gt.y, vw, gt.h);
+      } else { ctx.strokeStyle = rgb(gt.col, 0.35); ctx.lineWidth = 1; ctx.strokeRect(gt.x, gt.y, gt.w, gt.h); }
+    }
+    for (const sw of cr.switches) { // interruptores: octógono
+      const act = cr.gates.some((gt) => gt.open && (sw.abre.includes(gt.grupo) || sw.abre.includes(gt.id)));
+      poly([0, 1, 2, 3, 4, 5, 6, 7].map((k) => [sw.x + Math.cos(Math.PI / 8 + k * TAU / 8) * sw.r, sw.y + Math.sin(Math.PI / 8 + k * TAU / 8) * sw.r]));
+      if (act) { ctx.fillStyle = rgb(sw.col, 0.5); ctx.fill(); }
+      ctx.strokeStyle = rgb(sw.col, sw.cd > 0 ? 0.5 : 1); ctx.lineWidth = 3; ctx.stroke();
+    }
+    for (const lz of cr.lasers) { // láseres giratorios
+      const bx = lz.x + Math.cos(lz.ang) * lz.len, by = lz.y + Math.sin(lz.ang) * lz.len;
+      if (lz.on) {
+        ctx.lineCap = 'round';
+        ctx.strokeStyle = rgb(RED, 0.5); ctx.lineWidth = MAP_LASER_HALF_W * 2; ctx.beginPath(); ctx.moveTo(lz.x, lz.y); ctx.lineTo(bx, by); ctx.stroke();
+        ctx.strokeStyle = rgb(RED); ctx.lineWidth = 4; ctx.stroke();
+        ctx.strokeStyle = rgb(WHITE); ctx.lineWidth = 1; ctx.stroke();
+        ctx.lineCap = 'butt';
+      }
+      ctx.fillStyle = 'rgb(40,30,50)'; circle(lz.x, lz.y, 9); ctx.fill(); ctx.strokeStyle = rgb(RED); ctx.lineWidth = 2; ctx.stroke();
+    }
+    if (cr.dest) {
+      const d = cr.dest;
+      additive(() => glow(d.x, d.y, d.r * 2.2, LIME, 0.5));
+      ctx.strokeStyle = rgb(LIME); ctx.lineWidth = 2; circle(d.x, d.y, d.r); ctx.stroke();
+      ctx.lineWidth = 1; circle(d.x, d.y, d.r * (0.4 + 0.2 * Math.sin(t * 4))); ctx.stroke();
+    }
+    for (const a of cr.allyTurrets) { campDrawTurret(a, [60, 255, 176], false); campBar(a.x, a.y, a.r, a.hp / Math.max(1, a.max)); }
+    const cv = cr.convoy;
+    if (cv) {
+      const ang = Math.atan2(cv.dir[1], cv.dir[0]), ca = Math.cos(ang), sa = Math.sin(ang), P = (fx, fy) => [cv.x + (ca * fx - sa * fy) * cv.r, cv.y + (sa * fx + ca * fy) * cv.r];
+      additive(() => glow(cv.x, cv.y, cv.r * 3, [255, 213, 74], 0.6));
+      poly([P(1.3, 0), P(0.6, 0.8), P(-1, 0.8), P(-1, -0.8), P(0.6, -0.8)]);
+      ctx.fillStyle = rgb(cv.flash > 0 ? WHITE : [255, 213, 74], 0.4); ctx.fill(); ctx.strokeStyle = rgb(cv.stopped ? ORANGE : [255, 213, 74]); ctx.lineWidth = 2; ctx.stroke();
+      campBar(cv.x, cv.y, cv.r, cv.hp / Math.max(1, cv.max));
+      text(cv.nombre, cv.x, cv.y - cv.r - 36, 12, WHITE, { align: 'center', alpha: 0.85 });
+    }
+    for (const tu of cr.turrets) campDrawTurret(tu, tu.hack ? [60, 255, 176] : [255, 51, 85], !tu.hack && tu.cd > 0 && tu.cd <= cr.turCfg.aviso);
     for (const r of cr.rings) {
-      const col = r.done ? LIME : CYAN;
+      const col = r.done ? LIME : r.hack ? [60, 255, 176] : CYAN;
       additive(() => glow(r.x, r.y, r.r * 1.6, col, r.done ? 0.5 : 0.3));
       ctx.strokeStyle = rgb(col, 0.55); ctx.lineWidth = 2; ctx.setLineDash([6, 6]);
       circle(r.x, r.y, r.r); ctx.stroke(); ctx.setLineDash([]);
@@ -4294,9 +5373,49 @@
       ctx.stroke();
     }
   }
+  // oscuridad (capa negra α 0,92 con agujeros de luz) + sombra de los apagadores; las balas enemigas, los ojos y la
+  // Chispa siempre se ven (se redibujan encima)
+  let darkCv = null;
+  function campDrawDark() {
+    const cr = G.camp, lf = cr.lightFrac(), aps = G.enemies.filter((e) => e.alive && e.kind === 'apagador');
+    if (lf <= 0 && !aps.length && cr.darkWarn <= 0) return;
+    if (lf > 0) {
+      if (!darkCv) { darkCv = document.createElement('canvas'); darkCv.width = W; darkCv.height = H; }
+      const d = darkCv.getContext('2d');
+      d.globalCompositeOperation = 'source-over'; d.clearRect(0, 0, W, H);
+      d.fillStyle = `rgba(0,0,0,${CAMP_DARK_ALPHA})`; d.fillRect(0, 0, W, H);
+      d.globalCompositeOperation = 'destination-out';
+      for (const [x, y, rad] of cr.lights(lf * H)) {
+        const g = d.createRadialGradient(x, y, 0, x, y, rad);
+        g.addColorStop(0, 'rgba(0,0,0,1)'); g.addColorStop(0.55, 'rgba(0,0,0,0.85)'); g.addColorStop(1, 'rgba(0,0,0,0)');
+        d.fillStyle = g; d.beginPath(); d.arc(x, y, rad, 0, TAU); d.fill();
+      }
+      d.globalCompositeOperation = 'source-over';
+      ctx.drawImage(darkCv, 0, 0, W, H);
+    }
+    for (const e of aps) {
+      const g = ctx.createRadialGradient(e.x, e.y, 0, e.x, e.y, APAGADOR_DARK_PX);
+      g.addColorStop(0, 'rgba(0,0,0,0.75)'); g.addColorStop(1, 'rgba(0,0,0,0)');
+      ctx.fillStyle = g; circle(e.x, e.y, APAGADOR_DARK_PX); ctx.fill();
+    }
+    if (cr.darkWarn > 0 && Math.floor(cr.darkWarn * 10) % 2 === 0) { ctx.fillStyle = 'rgba(0,0,0,0.59)'; ctx.fillRect(0, 0, W, H); }
+    for (const b of G.ebullets) { ctx.fillStyle = rgb(b.c); circle(b.x, b.y, b.r); ctx.fill(); }
+    const ojo = [255, 51, 85];
+    ctx.fillStyle = rgb(ojo);
+    for (const e of G.enemies) if (e.alive) { circle(e.x, e.y, 3); ctx.fill(); }
+    for (const tu of cr.turrets) { circle(tu.x, tu.y, 3); ctx.fill(); }
+    if (G.boss) { additive(() => glow(G.boss.x, G.boss.y, 52, ojo, 0.5)); ctx.fillStyle = rgb(ojo); circle(G.boss.x, G.boss.y, 7); ctx.fill(); ctx.fillStyle = rgb(WHITE); circle(G.boss.x, G.boss.y, 2); ctx.fill(); }
+    if (cr.sigilo) { // radio de detección de cada patrulla
+      const det = (cr.t - cr.shotT < SIGILO_FIRE_S ? SIGILO_DET_FIRE : SIGILO_DET) * H;
+      ctx.strokeStyle = rgb(ojo, 0.45); ctx.lineWidth = 1;
+      for (const e of G.enemies) if (e.alive && e.campPatrol) { circle(e.x, e.y, det); ctx.stroke(); }
+    }
+    if (G.player && G.player.hp > 0 && lf > 0) drawPlayer(G.player);
+  }
   function campDrawOver() {
     const cr = G.camp;
     if (!cr) return;
+    campDrawDark();
     for (const w of cr.wings) {
       if (w.down > 0 || (w.flash > 0 && Math.floor(w.flash * 14) % 2 === 0)) continue;
       additive(() => glow(w.x, w.y, w.r * 2.6, w.color, 0.6));
@@ -4307,10 +5426,12 @@
     }
     for (const c of cr.capsules) { ctx.fillStyle = rgb(c[5], 1 - c[4] / 2.6); circle(c[0], c[1], 5); ctx.fill(); }
     const p = G.player;
-    if (cr.rings.length && p.hp > 0) { // flechas a los anillos que faltan
+    const tgs = cr.rings.filter((r) => !r.done);
+    if (cr.dest) tgs.push(cr.dest);
+    if (cr.exit && cr.exitOpen) tgs.push(cr.exit);
+    if (tgs.length && p.hp > 0) { // flechas a los anillos / destino / salida que faltan
       const k = 0.6 + 0.4 * Math.sin((bg.pulse || 0) * TAU * 2);
-      for (const r of cr.rings) {
-        if (r.done) continue;
+      for (const r of tgs) {
         const dx = r.x - p.x, dy = r.y - p.y, d = Math.hypot(dx, dy);
         if (d < r.r + 70) continue;
         const nx = dx / d, ny = dy / d, cx = p.x + nx * 40, cy = p.y + ny * 40;
@@ -4331,6 +5452,18 @@
       ctx.fillStyle = 'rgba(255,255,255,0.12)'; ctx.fillRect(120, ty + 56, 80, 5);
       ctx.fillStyle = rgb(CYAN); ctx.fillRect(120, ty + 56, 80 * k, 5);
     }
+    let hy = ty + (cr.mecs.has('impulso') ? 70 : 52);
+    if (cr.front) { // v5.2: barra del frente (meta y derrota marcadas)
+      const o = cr.obj, meta = o.meta === undefined ? 0.75 : +o.meta, der = o.derrota === undefined ? 0.1 : +o.derrota;
+      text(`FRENTE ${Math.round(cr.front.v * 100)}%`, 16, hy, 12, cr.front.v <= der + 0.1 ? RED : LIME, { bold: true });
+      ctx.fillStyle = 'rgba(255,255,255,0.12)'; ctx.fillRect(110, hy + 4, 120, 6);
+      ctx.fillStyle = rgb(LIME); ctx.fillRect(110, hy + 4, 120 * cr.front.v, 6);
+      ctx.fillStyle = rgb(YELLOW); ctx.fillRect(110 + 120 * meta - 1, hy + 1, 2, 12);
+      ctx.fillStyle = rgb(RED); ctx.fillRect(110 + 120 * der - 1, hy + 1, 2, 12);
+      hy += 18;
+    }
+    if (cr.escudo && G.player) { const p = G.player, rdy = p.shieldCd <= 0; text(rdy ? 'ESCUDO LISTO' : `ESCUDO ${Math.ceil(p.shieldCd)} s`, 16, hy, 12, rdy ? [168, 232, 255] : DIM, { bold: rdy }); hy += 18; }
+    if (cr.sigilo || cr.alarmas) { text(`ALARMAS ${cr.alarmas}`, 16, hy, 12, cr.alarmas ? RED : DIM); hy += 18; }
     const r = cr.radio.cur;
     if (r) { // radio: caja abajo al centro (no pausa el juego)
       const ch = campChar(r[0]), a = clamp(Math.min(r[2], r[3] - r[2]) / 0.25, 0, 1), bw = 560, bx = W / 2 - bw / 2, by = H - 132;
@@ -4411,12 +5544,14 @@
   HGUI.layout(view);
   setState('menu');
   if (PERFIL.warning) toast(PERFIL.warning);
-  // ---- aviso de novedades: una sola vez por versión, al entrar (no con ?perfil=off ni con link de invitación) ----
+  // ---- aviso de novedades: una vez por versión y navegador, al entrar. Lo único que lo esconde por URL es
+  // ?novedades=off (cualquier otro parámetro, como ?cb=1, ?sala=… o ?perfil=off, no lo toca). ?novedades=on lo fuerza.
+  // v5.2 web (acto 3-6): versión nueva '5.2-actos6' para que lo vean también quienes ya cerraron el de la 5.2.
   (function novedades() {
-    const NOV_VER = '5.2', KEY = 'neonDodge.novedades', el = $('novedades');
-    const q = new URLSearchParams(location.search);
-    if (!el || !PERFIL.active || q.get('novedades') === 'off' || salaParam) return;
-    try { if (localStorage.getItem(KEY) === NOV_VER) return; } catch (e) { /* sin almacenamiento: se muestra igual */ }
+    const NOV_VER = '5.2-actos6', KEY = 'neonDodge.novedades', el = $('novedades');
+    const nv = String(new URLSearchParams(location.search).get('novedades') || '').toLowerCase();
+    if (!el || nv === 'off') return;
+    try { if (nv !== 'on' && localStorage.getItem(KEY) === NOV_VER) return; } catch (e) { /* sin almacenamiento: se muestra igual */ }
     const close = () => {
       if (el.classList.contains('hidden')) return;
       el.classList.add('hidden');
@@ -4440,7 +5575,7 @@
 
   // Ganchos para pruebas automáticas / consola (no afectan el juego normal)
   window.NeonDodge = {
-    G, NET, C, view, PERFIL, startGame, startBoss, CS, CAMP, CD, campOpen, campNew, campContinue, campPlay, campRetry, campExitToHub, campOpenHub, campDialogNext, campCardEnd, campDoneContinue, campBuy, campRender, dashButton, toMenu, togglePause, hostStart, PERFIL, HG, HGUI, openHangar, makePlayer,
+    G, NET, C, view, PERFIL, startGame, startBoss, CS, CAMP, CD, campOpen, campNew, campContinue, campPlay, campRetry, campExitToHub, campOpenHub, campDialogNext, campCardEnd, campDoneContinue, campBuy, campRender, dashButton, habButton, weaponAvail, useAbility, toMenu, togglePause, hostStart, PERFIL, HG, HGUI, openHangar, makePlayer,
     setGod(v) { G.god = !!v; },
     get state() { return G.state; },
     get mode() { return NET.mode; },
@@ -4458,7 +5593,7 @@
     debug: {
       damage(id) { const p = G.players.find((q) => q.id === id); if (p) { p.invuln = 0; damagePlayer(p); } },
       MAPS, WEAPONS, useMap, safeSpawn, forbidden, obstacleHit, rpgExplode, damagePlayer, switchWeapon, initRound, spawnWave,
-      stepMove, makePlayer, setState, pushOut, freePoint, spawnPowerup, nearPortal, waveCount, rescaleBoss, hostDrop, AB, WARN, BOSS_TYPES,
+      stepMove, makePlayer, setState, pushOut, freePoint, spawnPowerup, nearPortal, waveCount, rescaleBoss, hostDrop, AB, WARN, BOSS_TYPES, toScreen: (x, y) => ({ x: x * view.scale + view.ox, y: y * view.scale + view.oy }),
       K: { RING_SLOTS, RING_GAP, RING_SPEED, MINE_MAX, MINE_ORBIT, MINE_R, MINE_HP, MISSILE_SPEED, MISSILE_HOMING, MISSILE_HP, MISSILE_R,
         LASER_SWEEP, LASER_TIME, LASER_HALF, WAVE_SPEED, WAVE_HALF, WAVE_GAPS, WAVE_GAP_W, RPG_RADIUS, RPG_SPLASH, START_LIVES,
         RESPAWN_SHORT, RESPAWN_INVULN, RESPAWN_TIME, ENEMY_COUNT_MULT, SPAWN_RATE_MULT, HUNTERS_PER_SUMMON, HUNTERS_MAX, MAX_ENEMIES, GLOBAL_CD, PROTO, TELE_DIST, TELE_MIN },
