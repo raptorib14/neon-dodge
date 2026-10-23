@@ -13,8 +13,8 @@
   const WEAPON_IDS = ['pistola', 'ametralladora', 'rpg', 'escopeta', 'esquirla', 'escolta_halcon', 'arco_orsini', 'lanza_lumen'];
   const WEAPON_NAMES = ['Pistola', 'Ametralladora', 'RPG', 'Abanico de Mecha', 'Esquirla Prisma', 'Escolta Halcón', 'Arco de Orsini', 'Lanza de Lumen'];
   const WEAPON_DESC = ['La de siempre. Precisa y confiable.', 'Muchas balas rápidas. ¡Barré todo!', 'Cohete lento que explota en área.',
-    '5 perdigones en abanico. Corto alcance, mucho golpe.', 'Rebota 3 veces (+25 % por rebote) y atraviesa 1 enemigo.',
-    '3 orbes te rodean y frenan balas. Disparar los lanza.', 'Relámpago que salta entre 4 enemigos. Ignora escudos.',
+    '6 perdigones en abanico. Alcance medio, mucho golpe.', 'Rebota 4 veces (+35 % por rebote) y atraviesa 1 enemigo.',
+    '4 orbes te rodean y frenan balas. Disparar los lanza.', 'Relámpago que salta entre 5 enemigos. Ignora escudos.',
     'Rayo continuo que atraviesa todo. Te frena un poco.'];
   const N_BASE_WEAPONS = 3; // pistola, ametralladora y RPG: las únicas del online (PROTO 2) y las del logro «Arsenal»
   const LICENSE_COST = { ametralladora: 60, rpg: 120, escopeta: 90, esquirla: 130, escolta_halcon: 150, arco_orsini: 170, lanza_lumen: 240 };
@@ -123,7 +123,7 @@
   }
 
 
-  // ---- Códigos secretos de Luces ✦ (como la compu): solo hashes sha256("<sal>" + CÓDIGO normalizado), una vez por perfil.
+  // ---- Canjes (como la compu): solo hashes sha256("<sal>" + texto normalizado), una vez por perfil.
   // Solo suman a la billetera local: no tocan la red ni el protocolo.
   const CODIGO_SAL = 'neon-dodge-luces-v1:', CODIGO_MAX_LEN = 16;
   const CODIGOS_LUCES = {

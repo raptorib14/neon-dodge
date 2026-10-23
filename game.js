@@ -56,11 +56,11 @@
   // tope global: 12 tiros/s cambiando de arma; con el disparo rápido, el de la pistola rápida (0,065 s)
   const GLOBAL_CD = 1 / 12, GLOBAL_CD_RAPID = 0.065;
   // ---- v5.2: las 5 armas nuevas (teclas 4-8), mismos números que la compu ----
-  const SHOTGUN = { n: 5, dmg: 1.2, cd: 1 / 1.6, spread: 22, speed: 620, range: 260, recoil: 18 };
-  const SHARD = { dmg: 1.3, cd: 1 / 3.5, speed: 520, life: 2.2, bounces: 3, mult: 1.25, pierce: 1 };
-  const ORB = { max: 3, r: 7, orbit: 46, spin: 3.2, contact: 1, contactCd: 0.25, dmg: 2.5, speed: 700, life: 0.75, cd: 0.3, regen: 1.4 };
-  const ARC = { dmg: 1.6, falloff: 0.7, jumps: 3, cd: 0.4, range: 230, jumpRange: 150, cone: 35 };
-  const LANCE = { dps: 8, tick: 0.1, range: 380, energy: 2.5, recharge: 1.5, slow: 0.7 };
+  const SHOTGUN = { n: 6, dmg: 1.4, cd: 1 / 1.6, spread: 20, speed: 620, range: 340, recoil: 18 };
+  const SHARD = { dmg: 1.8, cd: 1 / 3.5, speed: 520, life: 2.2, bounces: 4, mult: 1.35, pierce: 1 };
+  const ORB = { max: 4, r: 7, orbit: 46, spin: 3.2, contact: 2, contactCd: 0.25, dmg: 5, speed: 700, life: 0.75, cd: 0.3, regen: 0.65 };
+  const ARC = { dmg: 2.4, falloff: 0.7, jumps: 4, cd: 0.4, range: 270, jumpRange: 150, cone: 35 };
+  const LANCE = { dps: 11, tick: 0.1, range: 380, energy: 3.5, recharge: 1.5, slow: 0.7 };
   const OVERDRIVE = { time: 4, cad: 0.75, speed: 1.15 };
   const PULSE_RADIUS = 170, PULSE_PUSH = 70, DECOY_TIME = 4.5, DECOY_HP = 3, DECOY_PULL = 420;
   const WEAPON_COLORS = [null, null, null, [255, 140, 60], [150, 255, 235], [110, 190, 255], [200, 150, 255], [255, 213, 74]];
@@ -1194,7 +1194,7 @@
       pu: e.pu, respawnInv: e.respawnInv, shieldS: e.shieldS, shieldCd: 0, shield: e.shieldS > 0,
       bossHit: false, lostLife: false, usedW: new Set(), achSent: new Set(),
       // v5.2: orbes, Lanza, Sobremarcha y habilidad equipada
-      orbs: ORB.max, orbRegen: 0, orbAng: 0, orbCds: [0, 0, 0], lanceE: LANCE.energy, lanceLock: 0, beamOn: 0, beamEnd: null,
+      orbs: ORB.max, orbRegen: 0, orbAng: 0, orbCds: new Array(ORB.max).fill(0), lanceE: LANCE.energy, lanceLock: 0, beamOn: 0, beamEnd: null,
       overdrive: 0, hab: NET.mode === 'solo' ? e.hab || '' : '', habCd: 0 };
   }
   function stepMove(p, mx, my, dt) {
@@ -1725,7 +1725,7 @@
     const wi = p.weapon, wc = WEAPON_COLORS[wi], a0 = Math.atan2(dy, dx);
     const mx = p.x + dx * (p.r + 8), my = p.y + dy * (p.r + 8);
     let cd;
-    if (wi === 3) { // Abanico de Mecha: 5 perdigones + retroceso
+    if (wi === 3) { // Abanico de Mecha: 6 perdigones + retroceso
       for (let i = 0; i < SHOTGUN.n; i++) {
         const a = a0 + (-SHOTGUN.spread / 2 + SHOTGUN.spread * i / (SHOTGUN.n - 1) + rand(-2, 2)) * deg;
         v52Bullet(p, mx, my, a, SHOTGUN.speed, SHOTGUN.range / SHOTGUN.speed, SHOTGUN.dmg * p.dmg[3], 4, 3);
@@ -3279,7 +3279,7 @@
       if (p.lanceLock > 0) text(TXT.recalentada, bx + 128, by - 4, 12, RED);
       G.hudLance = k;
     } else if (cur === 5) {
-      for (let k = 0; k < ORB.max; k++) { ctx.fillStyle = rgb(k < p.orbs ? WEAPON_COLORS[5] : [40, 50, 70]); circle(W / 2 - 22 + k * 22, y - 10, 6); ctx.fill(); ctx.strokeStyle = rgb(WHITE); ctx.lineWidth = 1; ctx.stroke(); }
+      for (let k = 0; k < ORB.max; k++) { ctx.fillStyle = rgb(k < p.orbs ? WEAPON_COLORS[5] : [40, 50, 70]); circle(W / 2 - (ORB.max - 1) * 11 + k * 22, y - 10, 6); ctx.fill(); ctx.strokeStyle = rgb(WHITE); ctx.lineWidth = 1; ctx.stroke(); }
     }
     const h = HG.HABILIDADES[p.hab];
     G.hudHab = h ? { id: p.hab, cd: +p.habCd.toFixed(2) } : null;
@@ -5547,8 +5547,9 @@
   // ---- aviso de novedades: una vez por versión y navegador, al entrar. Lo único que lo esconde por URL es
   // ?novedades=off (cualquier otro parámetro, como ?cb=1, ?sala=… o ?perfil=off, no lo toca). ?novedades=on lo fuerza.
   // v5.2 web (acto 3-6): versión nueva '5.2-actos6' para que lo vean también quienes ya cerraron el de la 5.2.
+  // v5.2.1: '5.2.1' (armas nuevas más fuertes) para que vuelva a aparecer una vez.
   (function novedades() {
-    const NOV_VER = '5.2-actos6', KEY = 'neonDodge.novedades', el = $('novedades');
+    const NOV_VER = '5.2.1', KEY = 'neonDodge.novedades', el = $('novedades');
     const nv = String(new URLSearchParams(location.search).get('novedades') || '').toLowerCase();
     if (!el || nv === 'off') return;
     try { if (nv !== 'on' && localStorage.getItem(KEY) === NOV_VER) return; } catch (e) { /* sin almacenamiento: se muestra igual */ }
